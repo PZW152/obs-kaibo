@@ -10,6 +10,7 @@ set(KAIBO_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 add_executable(
   kaibo-tests
   test_core.cpp
+  ${KAIBO_SRC}/app/secret_store.cpp
   ${KAIBO_SRC}/core/areas.cpp
   ${KAIBO_SRC}/core/bili_client.cpp
   ${KAIBO_SRC}/core/cookies.cpp
@@ -19,6 +20,9 @@ add_executable(
   ${KAIBO_SRC}/vendor/json11/json11.cpp
 )
 target_include_directories(kaibo-tests PRIVATE "${KAIBO_SRC}")
+if(WIN32)
+  target_link_libraries(kaibo-tests PRIVATE crypt32)
+endif()
 if(MSVC)
   target_compile_options(kaibo-tests PRIVATE /W3 /WX /utf-8)
 else()

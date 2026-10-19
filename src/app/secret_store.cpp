@@ -18,7 +18,17 @@ constexpr char kMagic[] = "KBS1";
 constexpr size_t kMagicLength = 4;
 
 #ifdef _WIN32
+// Must outlive every DPAPI call: a DATA_BLOB built from a temporary string dangles once the
+// statement ends, and the entropy then becomes whatever reuses that heap block.
 const char kEntropy[] = "Kaibo credentials v1";
+
+DATA_BLOB entropyBlob()
+{
+	DATA_BLOB b;
+	b.pbData = reinterpret_cast<BYTE *>(const_cast<char *>(kEntropy));
+	b.cbData = static_cast<DWORD>(sizeof(kEntropy) - 1);
+	return b;
+}
 
 DATA_BLOB blobOf(const std::string &s)
 {
@@ -36,7 +46,7 @@ std::string seal(const std::string &plain)
 	std::string out(kMagic, kMagicLength);
 #ifdef _WIN32
 	DATA_BLOB in = blobOf(plain);
-	DATA_BLOB entropy = blobOf(std::string(kEntropy));
+	DATA_BLOB entropy = entropyBlob();
 	DATA_BLOB sealed{};
 	if (CryptProtectData(&in, L"Kaibo", &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &sealed)) {
 		out.push_back('\x01');
@@ -63,7 +73,7 @@ bool open(const std::string &sealed, std::string &plain)
 #ifdef _WIN32
 	if (scheme == '\x01') {
 		DATA_BLOB in = blobOf(payload);
-		DATA_BLOB entropy = blobOf(std::string(kEntropy));
+		DATA_BLOB entropy = entropyBlob();
 		DATA_BLOB out{};
 		if (!CryptUnprotectData(&in, nullptr, &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out))
 			return false;

@@ -552,6 +552,12 @@ void KaiboDock::render()
 		page = m_loginPage;
 	else if (s.auth == Auth::SignedIn)
 		page = m_mainPage;
+	// A stacked widget is as tall as its tallest page; hidden pages are ignored so the main page
+	// is not stretched to the settings page's height.
+	for (int i = 0; i < m_pages->count(); ++i) {
+		QWidget *w = m_pages->widget(i);
+		w->setSizePolicy(QSizePolicy::Preferred, w == page ? QSizePolicy::Preferred : QSizePolicy::Ignored);
+	}
 	m_pages->setCurrentWidget(page);
 	m_backButton->setVisible(m_settingsOpen);
 	m_settingsButton->setVisible(!m_settingsOpen);

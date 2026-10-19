@@ -10,7 +10,7 @@ cmake --build build-tests --config Release
 ctest --test-dir build-tests -C Release --output-on-failure
 ```
 
-测试覆盖：MD5 与 B 站签名、URL/表单编码、Cookie 合并与删除、扫码登录两种 Cookie 下发方式、错误分类（网络/HTTP/解析/接口/未登录）、开播成功与两种人脸认证、标题编码、直播间信息解析、分区解析与搜索、设置读写与损坏回退、原子写入。
+测试覆盖：MD5 与 B 站签名、URL/表单编码、Cookie 合并与删除、扫码登录两种 Cookie 下发方式、错误分类（网络/HTTP/解析/接口/未登录）、开播成功与两种人脸认证、标题编码、直播间信息解析、分区解析与搜索、设置读写与损坏回退、原子写入、凭证加密往返。
 
 语言文件检查（三种语言键一致、占位符一致、代码用到的键都存在）：
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Unit tests for the OBS-independent core. Build: see tests/CMakeLists.txt.
+#include "app/secret_store.hpp"
 #include "core/areas.hpp"
 #include "core/bili_client.hpp"
 #include "core/cookies.hpp"
@@ -421,6 +422,25 @@ TEST(atomic_write_keeps_backup)
 	CHECK(!readFile(dir + "/missing.json", data));
 	std::error_code ec;
 	std::filesystem::remove_all(dir, ec);
+}
+
+TEST(secret_seal_round_trip)
+{
+	// Heap churn between seal and open: a dangling entropy buffer would decrypt with different bytes.
+	for (int i = 0; i < 50; ++i) {
+		const std::string plain = "SESSDATA=" + std::string(static_cast<size_t>(i) * 7 + 1, 'x');
+		const std::string sealed = secret::seal(plain);
+		std::vector<std::string> churn(32, std::string(20, static_cast<char>('a' + i % 26)));
+		std::string opened;
+		CHECK(secret::open(sealed, opened));
+		CHECK_EQ(opened, plain);
+	}
+	std::string opened;
+	CHECK(!secret::open("", opened));
+	CHECK(!secret::open("XXXX\x01"
+			    "abc",
+			    opened));
+	CHECK(secret::open(std::string("KBS1\0plain", 10), opened) && opened == "plain");
 }
 
 int main()

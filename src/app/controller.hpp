@@ -5,6 +5,7 @@
 #include "app/store.hpp"
 #include "core/bili_client.hpp"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QImage>
 #include <QObject>
@@ -78,7 +79,10 @@ public:
 	bool hasUnsyncedChanges() const;
 	bool titleTooLong() const;
 	QString describe(const ApiError &error) const;
-	QString storageDirectory() const { return QString::fromStdString(m_store.directory()); }
+	QString storageDirectory() const
+	{
+		return QDir::toNativeSeparators(QString::fromStdString(m_store.directory()));
+	}
 
 	// Lifecycle (called from plugin-main on frontend events).
 	void startup();
