@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 常见问题 / FAQ
+    url: https://github.com/PZW152/obs-kaibo/blob/main/docs/troubleshooting.md
+    about: 二维码、开播失败、人脸认证、日志位置 / QR codes, go-live errors, face verification, logs
+  - name: 安全问题 / Security
+    url: https://github.com/PZW152/obs-kaibo/security/advisories/new
+    about: 凭证或推流码可能泄露？请私下报告 / Possible credential leak? Report privately

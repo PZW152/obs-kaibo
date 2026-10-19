@@ -1,0 +1,19 @@
+name: 功能建议 / 功能建議 / Feature request
+description: 希望 Kaibo 做到的事 / An idea for Kaibo
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题 / The problem
+      description: 直播时遇到的具体情况。What happens in your stream today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你希望怎样 / What you'd like
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 现在的替代做法 / Workarounds today

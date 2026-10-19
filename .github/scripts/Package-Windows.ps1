@@ -77,10 +77,12 @@ function Package {
         }
     }
     $InstallerDir = "${ProjectRoot}/installer/windows"
+    # Forward slashes: Inno Setup's preprocessor reads "\r" in "...\release" as an escape.
+    $Root = "${ProjectRoot}".Replace('\', '/')
     $IsccArgs = @(
         "/DAppVersion=${ProductVersion}"
-        "/DSourceDir=${ProjectRoot}elease\${Configuration}\${ProductName}"
-        "/DOutputDir=${ProjectRoot}elease"
+        "/DSourceDir=${Root}/release/${Configuration}/${ProductName}"
+        "/DOutputDir=${Root}/release"
     )
     # Chinese wizard texts are Inno Setup's community translations; build in English if they are unavailable.
     $LanguageBase = 'https://raw.githubusercontent.com/jrsoftware/issrc/is-6_4_3/Files/Languages/Unofficial'

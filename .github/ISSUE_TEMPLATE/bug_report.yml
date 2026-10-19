@@ -1,0 +1,49 @@
+name: 问题反馈 / 問題回報 / Bug report
+description: Kaibo 出错、开播失败、界面异常 / Something went wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请**不要**粘贴 Cookie、推流码或登录二维码。日志中 Kaibo 不会写入这些内容，可以放心附上。
+        Please never paste cookies, stream keys or QR codes. Kaibo's log lines never contain them.
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      description: 你做了什么、期望看到什么、实际看到什么。Steps, expected, actual.
+    validations:
+      required: true
+  - type: input
+    id: kaibo
+    attributes:
+      label: Kaibo 版本 / Version
+      description: 设置 → 关于 / Settings → About
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: obs
+    attributes:
+      label: OBS 版本 / OBS version
+      placeholder: "31.1.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 系统 / OS
+      options: [Windows, macOS, Ubuntu / Debian, Flatpak, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: language
+    attributes:
+      label: 界面语言 / UI language
+      options: [简体中文, 繁體中文, English]
+  - type: textarea
+    id: log
+    attributes:
+      label: 日志 / Log
+      description: OBS → 帮助 → 日志文件 → 查看当前日志，复制包含 [obs-kaibo] 的行。Help → Log Files → View Current Log, lines with [obs-kaibo].
+      render: text
