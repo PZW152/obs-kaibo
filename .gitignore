@@ -1,0 +1,42 @@
+# Exclude everything
+/*
+
+# Except for default project files
+!/.github
+!/build-aux
+!/cmake
+!/data
+!/src
+!/tests
+!/tools
+!/docs
+!/design
+!/installer
+!.clang-format
+!.gersemirc
+!.gitignore
+!buildspec.json
+!CMakeLists.txt
+!CMakePresets.json
+!com.obsproject.Studio.Plugin.Kaibo.metainfo.xml
+!com.obsproject.Studio.Plugin.Kaibo.yaml
+!flathub.json
+!LICENSE
+!README.md
+!README.zh-TW.md
+!README.en.md
+!CHANGELOG.md
+!SECURITY.md
+!THIRD_PARTY_NOTICES.md
+
+# Exclude lock files
+*.lock.json
+
+# Exclude macOS legacy resource forks
+.DS_Store
+
+# Exclude CMake build number cache
+/cmake/.CMakeBuildNumber
+
+# Downloaded at build time
+/installer/windows/Chinese*.isl

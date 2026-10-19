@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <id>com.obsproject.Studio.Plugin.Kaibo</id>
+  <extends>com.obsproject.Studio</extends>
+  <launchable type="url">https://github.com/PZW152/obs-kaibo</launchable>
+  <name>Kaibo</name>
+  <summary>Go live on Bilibili from an OBS dock</summary>
+  <description>
+    <p>
+      Kaibo adds a dock to OBS Studio: sign in to Bilibili with a QR code, edit the
+      room title, area and announcement, and go live in one click — Kaibo opens the
+      room, writes the RTMP settings into OBS and starts streaming. It watches for
+      dropped streams and mismatched room/stream states and offers the fix.
+      Interface in Simplified Chinese, Traditional Chinese and English.
+    </p>
+  </description>
+  <developer id="io.github.pzw152">
+    <name>Kaibo contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/PZW152/obs-kaibo</url>
+  <url type="bugtracker">https://github.com/PZW152/obs-kaibo/issues</url>
+  <releases>
+    <release version="1.0.0" date="2026-10-20"/>
+  </releases>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-only</project_license>
+</component>

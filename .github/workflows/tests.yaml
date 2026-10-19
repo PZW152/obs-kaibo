@@ -1,0 +1,36 @@
+name: Unit Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  core:
+    name: Core tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests -B build-tests -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-tests --config Release
+      - name: Run
+        run: ctest --test-dir build-tests -C Release --output-on-failure
+
+  locales:
+    name: Locale files
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check zh-CN / zh-TW / en-US are complete and consistent
+        run: python3 tools/check-locales.py
