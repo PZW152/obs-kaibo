@@ -5,7 +5,6 @@
 #include "core/text.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <ctime>
 
 namespace kaibo {
@@ -107,9 +106,23 @@ std::string BiliClient::signParams(std::vector<std::pair<std::string, std::strin
 
 int64_t BiliClient::parseBeijingTime(const std::string &text)
 {
-	int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
-	if (std::sscanf(text.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6)
+	// Exactly "YYYY-MM-DD HH:MM:SS".
+	static const char pattern[] = "dddd-dd-dd dd:dd:dd";
+	if (text.size() != sizeof(pattern) - 1)
 		return 0;
+	for (size_t i = 0; i < text.size(); ++i) {
+		const bool digit = text[i] >= '0' && text[i] <= '9';
+		if (pattern[i] == 'd' ? !digit : text[i] != pattern[i])
+			return 0;
+	}
+	auto field = [&text](size_t pos, size_t len) {
+		int value = 0;
+		for (size_t i = pos; i < pos + len; ++i)
+			value = value * 10 + (text[i] - '0');
+		return value;
+	};
+	const int y = field(0, 4), mo = field(5, 2), d = field(8, 2), h = field(11, 2), mi = field(14, 2),
+		  s = field(17, 2);
 	if (y < 2000 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60)
 		return 0;
 	const int64_t days = daysFromCivil(y, static_cast<unsigned>(mo), static_cast<unsigned>(d));

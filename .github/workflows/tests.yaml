@@ -19,7 +19,7 @@ jobs:
         os: [ubuntu-24.04, windows-2022, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure
         run: cmake -S tests -B build-tests -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -31,6 +31,6 @@ jobs:
     name: Locale files
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check zh-CN / zh-TW / en-US are complete and consistent
         run: python3 tools/check-locales.py

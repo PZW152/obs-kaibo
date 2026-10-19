@@ -87,7 +87,7 @@ void AreaPicker::open(QWidget *anchor, const std::vector<AreaGroup> &groups, con
 		const QRect area = screen->availableGeometry();
 		if (pos.y() + height() > area.bottom())
 			pos.setY(anchor->mapToGlobal(QPoint(0, 0)).y() - height() - 4);
-		pos.setX(std::min(pos.x(), area.right() - width()));
+		pos.setX((std::min)(pos.x(), area.right() - width()));
 	}
 	move(pos);
 	show();

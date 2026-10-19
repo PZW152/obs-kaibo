@@ -52,7 +52,7 @@ QColor parseColor(const QString &value)
 	if (m.hasMatch()) {
 		QColor c(m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt());
 		if (!m.captured(4).isEmpty())
-			c.setAlphaF(m.captured(4).toDouble());
+			c.setAlphaF(m.captured(4).toFloat());
 		return c;
 	}
 	return QColor();

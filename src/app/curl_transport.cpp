@@ -86,7 +86,7 @@ HttpResponse CurlTransport::send(const HttpRequest &request)
 	curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, onHeader);
 	curl_easy_setopt(c, CURLOPT_HEADERDATA, &response.setCookies);
 	curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, request.timeoutMs);
-	curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, std::min(6000L, request.timeoutMs));
+	curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, (std::min)(6000L, request.timeoutMs));
 	curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
 	curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
 	curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 0L);

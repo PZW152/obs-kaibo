@@ -145,7 +145,7 @@ void StatusPill::paintEvent(QPaintEvent *)
 
 	if (m_tone == Tone::Live) {
 		QColor halo = dot;
-		halo.setAlphaF(0.25);
+		halo.setAlphaF(0.25f);
 		p.setPen(Qt::NoPen);
 		p.setBrush(halo);
 		p.drawEllipse(QPointF(10.5, r.center().y()), 6.5, 6.5);
@@ -283,7 +283,7 @@ void QrView::paintEvent(QPaintEvent *)
 		const qreal origin = (width() - cell * m_size) / 2;
 		QColor ink = theme().color("qr-ink");
 		if (faded)
-			ink.setAlphaF(0.2);
+			ink.setAlphaF(0.2f);
 		p.setRenderHint(QPainter::Antialiasing, false);
 		p.setPen(Qt::NoPen);
 		p.setBrush(ink);
