@@ -1,5 +1,14 @@
 <p align="center"><img src="docs/images/kaibo-lockup.png" width="300" alt="Kaibo"></p>
 
+<p align="center">
+  <a href="https://github.com/PZW152/obs-kaibo/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/PZW152/obs-kaibo?color=d92d55&label=release"></a>
+  <a href="https://github.com/PZW152/obs-kaibo/actions/workflows/push.yaml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/PZW152/obs-kaibo/push.yaml?branch=main&label=build"></a>
+  <a href="https://github.com/PZW152/obs-kaibo/actions/workflows/tests.yaml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/PZW152/obs-kaibo/tests.yaml?branch=main&label=tests"></a>
+  <a href="https://github.com/PZW152/obs-kaibo/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/PZW152/obs-kaibo/total?color=111214"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/PZW152/obs-kaibo?color=111214"></a>
+  <img alt="OBS 30+" src="https://img.shields.io/badge/OBS-30%2B-111214">
+</p>
+
 <p align="center"><b>Go live on Bilibili from OBS in one click.</b><br>QR sign-in · title and area · automatic stream settings · dropped-stream alerts · 简体 / 繁體 / English</p>
 
 <p align="center"><a href="https://github.com/PZW152/obs-kaibo/releases/latest">Download</a> · <a href="README.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a></p>
