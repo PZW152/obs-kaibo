@@ -19,7 +19,7 @@ body:
     attributes:
       label: Kaibo 版本 / Version
       description: 设置 → 关于 / Settings → About
-      placeholder: "1.0.0"
+      placeholder: "1.0.1"
     validations:
       required: true
   - type: input

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 — 2026-10-20
 
 ### Fixed
 - Windows: the saved sign-in was sometimes rejected on the next OBS start ("stored sign-in could not be decrypted"), signing you out. The DPAPI entropy pointed at freed memory.
