@@ -1,11 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.0.2 — 2026-10-20
+
+1.0.1 was tagged but never published; its fixes (below) ship in this release.
 
 ### Fixed
 - Windows installer: running it while OBS was open failed with "Runtime error … Cannot call "UninstallSilent" function during Setup" instead of asking you to close OBS ([#2](https://github.com/PZW152/obs-kaibo/issues/2)). The uninstaller had the matching problem with `WizardSilent`.
 
-## 1.0.1 — 2026-10-20
+## 1.0.1 — 2026-10-20 (not published)
 
 ### Fixed
 - Windows: the saved sign-in was sometimes rejected on the next OBS start ("stored sign-in could not be decrypted"), signing you out. The DPAPI entropy pointed at freed memory.
