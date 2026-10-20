@@ -103,12 +103,14 @@ begin
   end;
 end;
 
-function WaitForObsClosed(): Boolean;
+{ Silent comes from the caller: UninstallSilent may only be called while
+  uninstalling and WizardSilent only while installing (issue #2). }
+function WaitForObsClosed(Silent: Boolean): Boolean;
 begin
   Result := True;
   while IsObsRunning() do
   begin
-    if UninstallSilent or WizardSilent then
+    if Silent then
     begin
       Result := False;
       Exit;
@@ -123,12 +125,12 @@ end;
 
 function InitializeSetup(): Boolean;
 begin
-  Result := WaitForObsClosed();
+  Result := WaitForObsClosed(WizardSilent);
 end;
 
 function InitializeUninstall(): Boolean;
 begin
-  Result := WaitForObsClosed();
+  Result := WaitForObsClosed(UninstallSilent);
 end;
 
 { Only the old plugin's own folder, recognised by its DLL — never a guess. }
