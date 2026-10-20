@@ -8,7 +8,6 @@ class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
-class QStackedWidget;
 class QScrollArea;
 
 namespace kaibo {
@@ -75,7 +74,6 @@ private:
 	QPushButton *m_backButton = nullptr;
 
 	QScrollArea *m_scroll = nullptr;
-	QStackedWidget *m_pages = nullptr;
 	QWidget *m_loadingPage = nullptr;
 	QWidget *m_loginPage = nullptr;
 	QWidget *m_mainPage = nullptr;

@@ -25,7 +25,6 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
-#include <QStackedWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -113,14 +112,16 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 	auto *col = new QVBoxLayout(content);
 	col->setContentsMargins(12, 4, 12, 12);
 	col->setSpacing(0);
-	m_pages = new QStackedWidget(content);
+	// Pages share one column and only the current one is visible. A QStackedWidget would size the
+	// scroll content to its tallest page (its heightForWidth spans hidden pages too).
 	m_loadingPage = buildLoadingPage();
 	m_loginPage = buildLoginPage();
 	m_mainPage = buildMainPage();
 	m_settingsPage = buildSettingsPage();
-	for (QWidget *page : {m_loadingPage, m_loginPage, m_mainPage, m_settingsPage})
-		m_pages->addWidget(page);
-	col->addWidget(m_pages);
+	for (QWidget *page : {m_loadingPage, m_loginPage, m_mainPage, m_settingsPage}) {
+		page->hide();
+		col->addWidget(page);
+	}
 	col->addStretch(1);
 	m_scroll->setWidget(content);
 	root->addWidget(m_scroll, 1);
@@ -247,8 +248,10 @@ QWidget *KaiboDock::buildMainPage()
 	names->setSpacing(0);
 	m_name = label({}, "title", account);
 	m_name->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	m_name->setMinimumWidth(1); // a long name is clipped instead of pushing the buttons out of the card
 	m_roomLabel = label({}, "caption", account);
 	m_roomLabel->setWordWrap(false);
+	m_roomLabel->setMinimumWidth(1);
 	names->addWidget(m_name);
 	names->addWidget(m_roomLabel);
 	who->addLayout(names, 1);
@@ -552,13 +555,8 @@ void KaiboDock::render()
 		page = m_loginPage;
 	else if (s.auth == Auth::SignedIn)
 		page = m_mainPage;
-	// A stacked widget is as tall as its tallest page; hidden pages are ignored so the main page
-	// is not stretched to the settings page's height.
-	for (int i = 0; i < m_pages->count(); ++i) {
-		QWidget *w = m_pages->widget(i);
-		w->setSizePolicy(QSizePolicy::Preferred, w == page ? QSizePolicy::Preferred : QSizePolicy::Ignored);
-	}
-	m_pages->setCurrentWidget(page);
+	for (QWidget *w : {m_loadingPage, m_loginPage, m_mainPage, m_settingsPage})
+		w->setVisible(w == page);
 	m_backButton->setVisible(m_settingsOpen);
 	m_settingsButton->setVisible(!m_settingsOpen);
 

@@ -5,6 +5,7 @@
 ### Fixed
 - Windows: the saved sign-in was sometimes rejected on the next OBS start ("stored sign-in could not be decrypted"), signing you out. The DPAPI entropy pointed at freed memory.
 - The account card on the main page was stretched to the height of the settings page, leaving a large empty gap.
+- In a narrow dock, a long account name pushed the account card's buttons out of view.
 - The data folder in Settings is shown with native path separators.
 
 ## 1.0.0 — 2026-10-20
