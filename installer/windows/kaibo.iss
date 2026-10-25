@@ -108,26 +108,19 @@ begin
   end;
 end;
 
-{ Fallback when WMI is unavailable: tasklist is a plain process call, and its output
-  only contains the image name when the process exists (the "no tasks" notice is
-  localised and does not mention it). }
+{ Fallback when WMI is unavailable: tasklist prints the image name only when the process
+  exists, and findstr turns that into an exit code (0 = found), so no file or string
+  helper is needed. The "no tasks" notice is localised and does not contain the name. }
 function TasklistSaysObsRunning(): Boolean;
 var
-  OutputFile: String;
   ExitCode: Integer;
-  Output: String;
 begin
   Result := False;
-  OutputFile := ExpandConstant('{tmp}\kaibo-tasklist.txt');
   if not Exec(ExpandConstant('{cmd}'),
-              '/c tasklist /FI "IMAGENAME eq obs64.exe" /NH > "' + OutputFile + '"',
+              '/c tasklist /FI "IMAGENAME eq obs64.exe" /NH | findstr /I /C:"obs64.exe" >NUL',
               '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
     Exit;
-  if not FileExists(OutputFile) then
-    Exit;
-  if LoadStringFromUTF8File(OutputFile, Output) then
-    Result := Pos('obs64.exe', Lowercase(Output)) > 0;
-  DeleteFile(OutputFile);
+  Result := ExitCode = 0;
 end;
 
 function IsObsRunning(): Boolean;
