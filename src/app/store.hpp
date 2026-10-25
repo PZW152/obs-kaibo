@@ -10,8 +10,9 @@ namespace kaibo {
 
 // Owns every file Kaibo writes. All of them live in one directory,
 // <OBS config>/plugin_config/obs-kaibo/ (inside the OBS folder in portable mode):
-//   settings.json      options, recents, stream-service backup   (+ .bak)
-//   credentials.bin    the Bilibili session, sealed per OS user  (+ .bak)
+//   settings.json      options, recents, legacy import state           (+ .bak)
+//   credentials.bin    the Bilibili session, sealed per OS user        (+ .bak)
+//   service-backup.bin the replaced OBS stream service, sealed per OS user (+ .bak)
 // Nothing is written anywhere else; deleteAll() removes exactly these files.
 class Store {
 public:
@@ -25,6 +26,12 @@ public:
 	CookieJar loadCredentials();
 	bool saveCredentials(const CookieJar &jar);
 	void clearCredentials();
+
+	// The replaced OBS service can contain another platform's stream key, so it is
+	// sealed like the credentials and kept out of settings.json.
+	ServiceBackup loadServiceBackup();
+	bool saveServiceBackup(const ServiceBackup &backup);
+	void clearServiceBackup();
 
 	// Session cookies of the previous plugin ("BILIBILI Stream for OBS",
 	// bilibili-stream-for-obs) if it left any. Read-only: never modified or deleted.

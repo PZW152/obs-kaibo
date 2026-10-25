@@ -124,15 +124,19 @@ std::string formatCount(int64_t value, UiLocale locale)
 {
 	if (value < 0)
 		value = 0;
+	// The thresholds are "when rounded to one decimal this reads 1000 of the smaller
+	// unit": 999999 is 1M, not 1000K; 99999999 is 1亿, not 10000万.
+	constexpr int64_t kEnglishMillion = 999950;          // 999.95 K rounds to 1000 K
+	constexpr int64_t kChineseHundredMillion = 99999500; // 9999.95 萬 rounds to 10000 萬
 	if (locale == UiLocale::English) {
-		if (value >= 1000000)
+		if (value >= kEnglishMillion)
 			return oneDecimal(static_cast<double>(value) / 1000000.0) + "M";
 		if (value >= 10000)
 			return oneDecimal(static_cast<double>(value) / 1000.0) + "K";
 		return grouped(value);
 	}
 	const bool traditional = locale == UiLocale::TraditionalChinese;
-	if (value >= 100000000)
+	if (value >= kChineseHundredMillion)
 		return oneDecimal(static_cast<double>(value) / 100000000.0) +
 		       (traditional ? "\xE5\x84\x84" : "\xE4\xBA\xBF"); // 億 / 亿
 	if (value >= 10000)

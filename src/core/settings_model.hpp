@@ -14,7 +14,9 @@ struct Options {
 	bool confirmEnd = true;            // ask before ending
 };
 
-// The OBS stream service that was active before Kaibo replaced it.
+// The OBS stream service that was active before Kaibo replaced it. It is kept in a
+// separate sealed file (service-backup.bin) because the JSON can contain another
+// platform's stream key; settings.json never stores it.
 struct ServiceBackup {
 	std::string type;         // e.g. "rtmp_common"
 	std::string settingsJson; // obs_data JSON of that service

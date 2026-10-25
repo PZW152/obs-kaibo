@@ -3,6 +3,7 @@
 #include "app/curl_transport.hpp"
 #include "app/i18n.hpp"
 #include "app/worker.hpp"
+#include "core/face_auth.hpp"
 #include "core/text.hpp"
 
 #include <obs-module.h>
@@ -44,6 +45,8 @@ LiveController::LiveController(QObject *parent)
 	connect(&m_pollTimer, &QTimer::timeout, this, &LiveController::refresh);
 	m_qrTimer.setInterval(1500);
 	connect(&m_qrTimer, &QTimer::timeout, this, &LiveController::pollQr);
+	m_faceAuthTimer.setSingleShot(true);
+	connect(&m_faceAuthTimer, &QTimer::timeout, this, &LiveController::requestFaceAuthRetry);
 }
 
 LiveController::~LiveController()
@@ -173,6 +176,7 @@ void LiveController::onStreamingStopped()
 		std::string error;
 		if (obs::restoreStreamService(m_settings.serviceBackup, error)) {
 			m_settings.serviceBackup = {};
+			m_store.clearServiceBackup();
 			persistSettings();
 		} else {
 			obs_log(LOG_WARNING, "could not restore stream settings: %s", error.c_str());
@@ -215,21 +219,36 @@ void LiveController::shutdownForExit()
 {
 	m_pollTimer.stop();
 	m_qrTimer.stop();
+	clearFaceAuth();
 	m_watcher->detach();
-	if (!(m_state.options.closeRoomOnExit && m_state.room.live && m_state.auth == Auth::SignedIn &&
-	      m_state.roomId > 0))
-		return;
-	// OBS is closing: there is no event loop left to wait on, so close the room
-	// synchronously with a private client and a short timeout.
-	CurlTransport transport;
-	BiliClient client(transport);
-	client.setCookies(m_cookies);
-	client.setTimeoutMs(4000); // OBS is waiting on us to quit
-	const ApiError error = client.stopLive(m_state.roomId);
-	if (error)
-		obs_log(LOG_WARNING, "could not close the live room on exit: %s", error.message.c_str());
-	else
-		obs_log(LOG_INFO, "closed the live room on exit");
+	const bool closingRoom = m_state.options.closeRoomOnExit && m_state.room.live &&
+				 m_state.auth == Auth::SignedIn && m_state.roomId > 0;
+	if (closingRoom) {
+		// OBS is closing: there is no event loop left to wait on, so close the room
+		// synchronously with a private client and a short timeout.
+		CurlTransport transport;
+		BiliClient client(transport);
+		client.setCookies(m_cookies);
+		client.setTimeoutMs(4000); // OBS is waiting on us to quit
+		const ApiError error = client.stopLive(m_state.roomId);
+		if (error)
+			obs_log(LOG_WARNING, "could not close the live room on exit: %s", error.message.c_str());
+		else
+			obs_log(LOG_INFO, "closed the live room on exit");
+	}
+	// Put the user's own stream service back before OBS saves its config on quit: the
+	// output is already stopped here, so this cannot cut a running stream.
+	if ((!m_state.room.live || closingRoom) && m_settings.serviceBackup.valid()) {
+		std::string error;
+		if (obs::restoreStreamService(m_settings.serviceBackup, error)) {
+			m_settings.serviceBackup = {};
+			m_store.clearServiceBackup();
+			m_store.saveSettings(m_settings);
+			obs_log(LOG_INFO, "restored the previous stream settings on exit");
+		} else {
+			obs_log(LOG_WARNING, "could not restore stream settings on exit: %s", error.c_str());
+		}
+	}
 }
 
 // ---------------------------------------------------------------- sign-in
@@ -244,6 +263,7 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 		bool roomOk = false;
 		std::string news;
 		bool newsOk = false;
+		CookieJar cookies; // the jar after the requests, so new cookies are not lost
 	};
 	auto result = std::make_shared<Result>();
 	auto client = m_client;
@@ -256,15 +276,19 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 
 	worker::run(
 		this,
-		[client, jar, result] {
+		[client, jar, result, now = nowSeconds()] {
 			client->setCookies(jar);
+			// Bilibili's live APIs expect a stable device identity (buvid3/buvid4) on
+			// every request. Mint it once, keep it, and never fail the sign-in over it.
+			if (client->ensureDeviceCookies(now))
+				obs_log(LOG_WARNING, "could not fetch the Bilibili device id; continuing");
 			result->error = client->fetchProfile(result->profile);
-			if (result->error)
-				return;
-			if (client->fetchRoomId(result->profile.mid, result->roomId) || result->roomId <= 0)
-				return;
-			result->roomOk = !client->fetchRoomInfo(result->roomId, result->room);
-			result->newsOk = !client->fetchRoomNews(result->roomId, result->news);
+			if (!result->error && !client->fetchRoomId(result->profile.mid, result->roomId) &&
+			    result->roomId > 0) {
+				result->roomOk = !client->fetchRoomInfo(result->roomId, result->room);
+				result->newsOk = !client->fetchRoomNews(result->roomId, result->news);
+			}
+			result->cookies = client->cookies();
 		},
 		[this, result, jar, fromLogin, generation] {
 			if (generation != m_sessionGeneration)
@@ -278,6 +302,14 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 			}
 			m_state.auth = Auth::SignedIn;
 			m_state.legacyAvailable = false;
+			// Keep whatever the server handed out (a freshly minted device id, a
+			// rotated session cookie) even when the follow-up request failed.
+			const CookieJar &fresh = result->cookies.hasSession() ? result->cookies : jar;
+			m_cookies = fresh;
+			// Do not rewrite the encrypted file on every offline retry: save on success,
+			// and on failure only when the server actually changed something.
+			if (!result->error || fresh.header() != jar.header())
+				m_store.saveCredentials(fresh);
 			if (result->error) {
 				// Keep the session: most likely offline. The poll timer retries.
 				m_state.offline = result->error.kind == ErrorKind::Network;
@@ -296,7 +328,6 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 				m_state.newsDraft = qs(result->news);
 				m_state.newsLoaded = true;
 			}
-			m_store.saveCredentials(jar);
 			if (fromLogin)
 				notify(T("Msg.LoginOk"), ToastKind::Ok);
 			loadAvatar();
@@ -307,6 +338,8 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 
 void LiveController::resetSession()
 {
+	m_faceAuthTimer.stop();
+	m_faceAuthAttempt = 0;
 	const Options options = m_state.options;
 	const auto recentAreas = m_state.recentAreas;
 	const auto recentTitles = m_state.recentTitles;
@@ -326,6 +359,7 @@ void LiveController::resetSession()
 	++m_sessionGeneration;
 	auto client = m_client;
 	worker::run(this, [client] { client->setCookies({}); });
+	emit avatarChanged(); // never show the previous account's picture
 }
 
 void LiveController::startQrLogin()
@@ -485,6 +519,10 @@ void LiveController::applyRoom(const RoomInfo &room)
 
 	m_state.room = room;
 	m_state.roomLoaded = true;
+	// The broadcast may have been started from the web live centre or the app right after
+	// the verification; there is nothing left to verify here.
+	if (room.live)
+		clearFaceAuth();
 	// Follow the server for fields the person has not edited.
 	if (m_state.titleDraft.isEmpty() || m_state.titleDraft == oldTitle)
 		m_state.titleDraft = qs(room.title);
@@ -666,6 +704,10 @@ void LiveController::goLive()
 {
 	if (m_state.auth != Auth::SignedIn || m_state.busy != Busy::None)
 		return;
+	if (m_state.face != FaceAuth::None) {
+		// Already waiting on a verification; the card on the main page drives it.
+		return;
+	}
 	if (m_state.roomId <= 0) {
 		notify(T("Msg.NoRoom"), ToastKind::Error);
 		return;
@@ -699,6 +741,7 @@ void LiveController::goLive()
 	auto client = m_client;
 	const int64_t roomId = m_state.roomId;
 	const int areaId = m_state.areaDraft;
+	const int generation = m_sessionGeneration;
 	worker::run(
 		this,
 		[client, roomId, areaId, title, area, result] {
@@ -708,7 +751,9 @@ void LiveController::goLive()
 				return;
 			result->error = client->startLive(roomId, areaId, result->start);
 		},
-		[this, result, title, area] {
+		[this, result, title, area, generation] {
+			if (generation != m_sessionGeneration)
+				return;
 			m_state.busy = Busy::None;
 			if (result->syncError) {
 				notify(T("Error.UpdateRoom"), ToastKind::Error, describe(result->syncError));
@@ -721,21 +766,131 @@ void LiveController::goLive()
 			}
 			if (area)
 				m_state.room.areaId = *area;
-			if (result->error) {
-				if (!result->start.faceAuthUrl.empty()) {
-					emit faceAuthRequired(qs(result->start.faceAuthUrl));
-				} else {
-					notify(T("Error.StartLive"), ToastKind::Error, describe(result->error));
-				}
-				emit changed();
+			handleStartLiveResult(result->error, result->start);
+		});
+}
+
+// Bilibili answered the start request with "face verification required" (60024/60043):
+// show the code and wait for the person instead of failing the whole go-live.
+void LiveController::handleStartLiveResult(const ApiError &error, const LiveStart &start)
+{
+	if (!error) {
+		finishLiveStart(start);
+		return;
+	}
+	if (!start.faceAuthUrl.empty()) {
+		m_faceAuthAttempt = 0;
+		m_state.face = FaceAuth::Required;
+		m_state.faceAuthUrl = qs(start.faceAuthUrl);
+		m_state.faceAuthAttempt = 0;
+		notify(T("Msg.FaceAuthNeeded"), ToastKind::Info);
+	} else {
+		notify(T("Error.StartLive"), ToastKind::Error, describe(error));
+	}
+	emit changed();
+}
+
+void LiveController::confirmFaceAuth()
+{
+	if (m_state.auth != Auth::SignedIn || m_state.face == FaceAuth::None || m_state.busy != Busy::None)
+		return;
+	m_faceAuthAttempt = 0;
+	m_state.face = FaceAuth::Retrying;
+	m_state.faceAuthAttempt = 0;
+	m_state.busy = Busy::GoingLive;
+	notify(T("Msg.FaceAuthChecking"), ToastKind::Info);
+	emit changed();
+	retryFaceAuth();
+}
+
+void LiveController::cancelFaceAuth()
+{
+	if (m_state.face == FaceAuth::Retrying)
+		return; // a retry is already in flight; let it finish or fail
+	clearFaceAuth();
+	notify(T("Msg.FaceAuthSkipped"), ToastKind::Info);
+	emit changed();
+}
+
+void LiveController::clearFaceAuth()
+{
+	m_faceAuthTimer.stop();
+	m_faceAuthAttempt = 0;
+	if (m_state.face == FaceAuth::Retrying && m_state.busy == Busy::GoingLive)
+		m_state.busy = Busy::None; // the retry loop owned the busy flag
+	m_state.face = FaceAuth::None;
+	m_state.faceAuthUrl.clear();
+	m_state.faceAuthAttempt = 0;
+}
+
+// Schedule one more start-live attempt; spaced out because the phone-side verification
+// reaches Bilibili's live API a moment after the person finishes it.
+void LiveController::retryFaceAuth()
+{
+	if (m_state.face != FaceAuth::Retrying)
+		return; // cancelled, or the room turned out to be live already
+	if (m_state.auth != Auth::SignedIn || m_faceAuthAttempt >= kFaceAuthMaxRetries) {
+		const int attempts = m_faceAuthAttempt;
+		m_state.busy = Busy::None;
+		clearFaceAuth();
+		notify(T("Error.FaceAuthPending").arg(attempts), ToastKind::Error);
+		emit changed();
+		return;
+	}
+	const int delay = faceAuthBackoffMs(m_faceAuthAttempt);
+	++m_faceAuthAttempt;
+	m_state.faceAuthAttempt = m_faceAuthAttempt;
+	m_faceAuthTimer.start(delay);
+	emit changed();
+}
+
+void LiveController::requestFaceAuthRetry()
+{
+	if (m_state.auth != Auth::SignedIn || m_state.roomId <= 0) {
+		m_state.busy = Busy::None;
+		clearFaceAuth();
+		emit changed();
+		return;
+	}
+	struct Result {
+		ApiError error;
+		LiveStart start;
+	};
+	auto result = std::make_shared<Result>();
+	auto client = m_client;
+	const int64_t roomId = m_state.roomId;
+	const int areaId = m_state.areaDraft;
+	const int generation = m_sessionGeneration;
+	worker::run(
+		this,
+		[client, roomId, areaId, result] { result->error = client->startLive(roomId, areaId, result->start); },
+		[this, result, generation] {
+			if (generation != m_sessionGeneration)
+				return;
+			if (m_state.face == FaceAuth::None) {
+				m_state.busy = Busy::None;
+				return; // cancelled while the request was in flight
+			}
+			if (!result->error) {
+				m_state.busy = Busy::None;
+				finishLiveStart(result->start);
 				return;
 			}
-			finishLiveStart(result->start);
+			if (!result->start.faceAuthUrl.empty()) {
+				// Keep the same code on screen; only the message changes.
+				retryFaceAuth();
+				return;
+			}
+			m_state.busy = Busy::None;
+			clearFaceAuth();
+			notify(T("Error.StartLive"), ToastKind::Error, describe(result->error));
+			emit changed();
 		});
 }
 
 void LiveController::finishLiveStart(const LiveStart &start)
 {
+	clearFaceAuth();
 	m_state.server = qs(start.server);
 	m_state.key = qs(start.key);
 	m_state.room.live = true;
@@ -753,6 +908,10 @@ void LiveController::finishLiveStart(const LiveStart &start)
 			notify(T("Error.ApplyService"), ToastKind::Error);
 		} else {
 			m_state.streamTargetIsBilibili = true;
+			// Keep the captured service in the sealed file: it can contain another
+			// platform's stream key, so it never goes into settings.json.
+			if (backup && backup->valid())
+				m_store.saveServiceBackup(*backup);
 			if (m_state.options.autoStartStream) {
 				obs::startStreaming();
 				notify(T("Msg.LiveStarted"), ToastKind::Ok);
@@ -816,10 +975,12 @@ void LiveController::finishRoomClosed(bool restoreAfter)
 			m_pendingRestore = true; // after OBS has finished stopping
 		} else {
 			std::string error;
-			if (obs::restoreStreamService(m_settings.serviceBackup, error))
+			if (obs::restoreStreamService(m_settings.serviceBackup, error)) {
 				m_settings.serviceBackup = {};
-			else
+				m_store.clearServiceBackup();
+			} else {
 				obs_log(LOG_WARNING, "could not restore stream settings: %s", error.c_str());
+			}
 		}
 	}
 	persistSettings();
@@ -842,8 +1003,12 @@ void LiveController::stopObsStream()
 void LiveController::setOptions(const Options &options)
 {
 	m_state.options = options;
-	if (!options.restoreService)
+	// The captured service belongs to the live session, not to the checkbox: while a
+	// room is live, toggling the option off and on again must not throw it away.
+	if (!options.restoreService && !m_state.room.live) {
 		m_settings.serviceBackup = {};
+		m_store.clearServiceBackup();
+	}
 	persistSettings();
 	emit changed();
 }

@@ -3,6 +3,7 @@
 #include "app/controller.hpp"
 #include "app/i18n.hpp"
 #include "app/secret_store.hpp"
+#include "core/face_auth.hpp"
 #include "ui/area_picker.hpp"
 #include "ui/theme.hpp"
 #include "ui/widgets.hpp"
@@ -35,6 +36,7 @@ using Phase = LiveController::Phase;
 using Busy = LiveController::Busy;
 using Auth = LiveController::Auth;
 using QrPhase = LiveController::QrPhase;
+using FaceAuth = LiveController::FaceAuth;
 
 const char *const kLiveCenterUrl = "https://link.bilibili.com/p/center/index";
 const char *const kProjectUrl = "https://github.com/PZW152/obs-kaibo";
@@ -93,9 +95,10 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 {
 	setObjectName(QStringLiteral("KaiboDock"));
 	setAttribute(Qt::WA_StyledBackground);
-	setMinimumWidth(theme().length(QStringLiteral("dock-min"), 280));
+	// Load the design tokens before reading any length out of them.
 	theme().load();
 	theme().followPalette(QApplication::palette());
+	setMinimumWidth(theme().length(QStringLiteral("dock-min"), 280));
 
 	auto *root = new QVBoxLayout(this);
 	root->setContentsMargins(0, 0, 0, 0);
@@ -141,7 +144,6 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 		[this](const QString &text, int kind, const QString &detail) {
 			m_toast->showMessage(kind, text, detail);
 		});
-	connect(m_controller, &LiveController::faceAuthRequired, this, &KaiboDock::showFaceAuth);
 
 	applyTheme();
 	render();
@@ -362,6 +364,10 @@ QWidget *KaiboDock::buildMainPage()
 	rc->addLayout(syncRow);
 	col->addWidget(room);
 
+	// Face verification card — only rendered while Bilibili asks for one.
+	m_faceCard = buildFaceAuthCard();
+	col->addWidget(m_faceCard);
+
 	// Go live
 	auto *live = new QWidget(page);
 	auto *lc = new QVBoxLayout(live);
@@ -441,6 +447,49 @@ QWidget *KaiboDock::buildMainPage()
 	return page;
 }
 
+// Inline face-verification prompt: the code lives in the main column next to the Go
+// Live button, so the dock stays usable and there is exactly one prompt per attempt.
+QWidget *KaiboDock::buildFaceAuthCard()
+{
+	auto *c = card(this);
+	auto *col = new QVBoxLayout(c);
+	col->setContentsMargins(16, 16, 16, 14);
+	col->setSpacing(10);
+
+	m_faceHeading = label(T("Face.Heading"), "title", c);
+	m_faceHeading->setAlignment(Qt::AlignCenter);
+	col->addWidget(m_faceHeading);
+	m_faceHint = label(T("Face.Hint"), "caption", c);
+	m_faceHint->setAlignment(Qt::AlignCenter);
+	col->addWidget(m_faceHint);
+	m_faceQr = new QrView(c);
+	m_faceQr->setAccessibleName(T("Face.QrAccessible"));
+	col->addWidget(m_faceQr, 0, Qt::AlignHCenter);
+
+	auto *row = new QHBoxLayout();
+	row->setSpacing(6);
+	m_faceCancel = button(T("Common.Cancel"), "ghost", c);
+	m_faceCancel->setProperty("kbSize", QStringLiteral("sm"));
+	connect(m_faceCancel, &QPushButton::clicked, m_controller, &LiveController::cancelFaceAuth);
+	m_faceBrowser = button(T("Face.OpenInBrowser"), "ghost", c);
+	m_faceBrowser->setProperty("kbSize", QStringLiteral("sm"));
+	connect(m_faceBrowser, &QPushButton::clicked, this, [this] {
+		const QString url = m_controller->state().faceAuthUrl;
+		if (!url.isEmpty())
+			QDesktopServices::openUrl(QUrl(url));
+	});
+	m_faceConfirm = button(T("Face.Done"), "primary", c);
+	m_faceConfirm->setProperty("kbSize", QStringLiteral("sm"));
+	connect(m_faceConfirm, &QPushButton::clicked, m_controller, &LiveController::confirmFaceAuth);
+	row->addWidget(m_faceCancel);
+	row->addWidget(m_faceBrowser);
+	row->addStretch(1);
+	row->addWidget(m_faceConfirm);
+	col->addLayout(row);
+	c->hide();
+	return c;
+}
+
 QWidget *KaiboDock::buildSettingsPage()
 {
 	auto *page = new QWidget(this);
@@ -498,6 +547,7 @@ QWidget *KaiboDock::buildSettingsPage()
 		label(T("Settings.DataHint").arg(QString::fromLatin1(secret::protectionName())), "caption", data));
 	m_dataPath = label(m_controller->storageDirectory(), "faint", data);
 	m_dataPath->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	m_dataPath->setWordWrap(true); // the path has no spaces; do not let it widen the dock
 	dc->addWidget(m_dataPath);
 	auto *dataRow = new QHBoxLayout();
 	auto *openFolder = button(T("Settings.OpenFolder"), "ghost", data);
@@ -565,6 +615,8 @@ void KaiboDock::render()
 		m_pill->set(StatusPill::Tone::Busy, T("Status.Starting"));
 	else if (s.busy == Busy::Ending)
 		m_pill->set(StatusPill::Tone::Busy, T("Status.Stopping"));
+	else if (s.busy == Busy::Syncing)
+		m_pill->set(StatusPill::Tone::Busy, T("Status.Saving"));
 	else if (s.auth != Auth::SignedIn)
 		m_pill->set(StatusPill::Tone::Neutral,
 			    s.auth == Auth::SignedOut ? T("Status.SignedOut") : T("Status.Connecting"));
@@ -612,6 +664,9 @@ void KaiboDock::render()
 		m_roomLabel->setText(T("Header.Room").arg(s.roomId));
 	else
 		m_roomLabel->setText(s.roomLoaded || s.profile.mid ? T("Header.NoRoom") : QString());
+	// The card is narrow: the labels elide, so the full value stays reachable as a tooltip.
+	m_name->setToolTip(m_name->text());
+	m_roomLabel->setToolTip(m_roomLabel->text());
 	const UiLocale locale = uiLocale();
 	m_followers->setText(T("Stat.Fans").arg(qs(formatCount(s.room.followers, locale))));
 	m_online->setText(T("Stat.Online").arg(qs(formatCount(s.room.online, locale))));
@@ -630,11 +685,17 @@ void KaiboDock::render()
 	m_titleError->setVisible(tooLong);
 
 	QString areaText = T("Room.PickArea");
-	if (const Area *area = findArea(s.areas, s.areaDraft))
+	bool areaPicked = false;
+	if (const Area *area = findArea(s.areas, s.areaDraft)) {
 		areaText = qs(area->parentName) + QStringLiteral("  ›  ") + qs(area->name);
-	else if (s.areaDraft > 0 && s.areaDraft == s.room.areaId && !s.room.areaName.empty())
+		areaPicked = true;
+	} else if (s.areaDraft > 0 && s.areaDraft == s.room.areaId && !s.room.areaName.empty()) {
 		areaText = qs(s.room.parentAreaName) + QStringLiteral("  ›  ") + qs(s.room.areaName);
+		areaPicked = true;
+	}
 	m_areaText->setText(areaText);
+	// The placeholder is a hint, not a selection: keep it muted so it does not read as picked.
+	Theme::setProp(m_areaText, "kbText", areaPicked ? QString() : QStringLiteral("faint"));
 
 	m_newsToggle->setVisible(s.newsLoaded);
 	m_newsToggle->setText(s.news.empty() && s.newsDraft.isEmpty() ? T("Room.NewsAdd") : T("Room.NewsEdit"));
@@ -645,7 +706,9 @@ void KaiboDock::render()
 	const bool newsOpen = m_newsToggle->isChecked() && s.newsLoaded;
 	m_news->setVisible(newsOpen);
 	m_newsCounter->setVisible(newsOpen);
-	Theme::setProp(m_news, "kbError", newsLength > LiveController::kNewsLimit);
+	const bool newsTooLong = newsLength > LiveController::kNewsLimit;
+	Theme::setProp(m_news, "kbError", newsTooLong);
+	Theme::setProp(m_newsCounter, "kbText", newsTooLong ? QStringLiteral("danger") : QStringLiteral("faint"));
 
 	const bool unsynced = m_controller->hasUnsyncedChanges();
 	m_sync->setEnabled(unsynced && s.busy == Busy::None && !tooLong && newsLength <= LiveController::kNewsLimit);
@@ -653,6 +716,7 @@ void KaiboDock::render()
 	m_syncHint->setText(unsynced ? T("Room.Unsaved") : QString());
 
 	renderBanner();
+	renderFaceAuth();
 	renderGoLive();
 	renderClock();
 
@@ -725,6 +789,25 @@ void KaiboDock::renderBanner()
 	m_banner->hide();
 }
 
+// Renders the face-verification card: the code, what to do with it, and whether the
+// controller is already retrying in the background. One card per go-live attempt.
+void KaiboDock::renderFaceAuth()
+{
+	const auto &s = m_controller->state();
+	const bool visible = s.auth == Auth::SignedIn && s.face != FaceAuth::None;
+	m_faceCard->setVisible(visible);
+	if (!visible)
+		return;
+	const bool retrying = s.face == FaceAuth::Retrying;
+	m_faceQr->setPayload(s.faceAuthUrl);
+	m_faceQr->setOverlay(QrView::Overlay::None);
+	m_faceHeading->setText(retrying ? T("Face.HeadingRetry") : T("Face.Heading"));
+	m_faceHint->setText(retrying ? T("Face.RetryAttempt").arg(s.faceAuthAttempt).arg(kFaceAuthMaxRetries)
+				     : T("Face.Hint"));
+	m_faceConfirm->setEnabled(!retrying);
+	m_faceCancel->setEnabled(!retrying);
+}
+
 void KaiboDock::renderGoLive()
 {
 	const auto &s = m_controller->state();
@@ -744,6 +827,9 @@ void KaiboDock::renderGoLive()
 		text = T("Button.End");
 		hint = T("Hint.Live");
 		icon = QStringLiteral("stop");
+	} else if (s.face == FaceAuth::Required) {
+		text = T("Face.WaitingButton");
+		hint = T("Face.WaitingHint");
 	} else if (s.roomId <= 0) {
 		enabled = false;
 		text = T("Status.NoRoom");
@@ -757,6 +843,10 @@ void KaiboDock::renderGoLive()
 						   : T("Hint.StartNoStream");
 		icon = QStringLiteral("play");
 	}
+	// A busy controller or a pending verification means a click cannot do anything:
+	// keep the button visibly (and actually) disabled instead of swallowing clicks. A
+	// live room always offers "End", even if a stale verification state is still around.
+	enabled = enabled && s.busy == Busy::None && (s.face == FaceAuth::None || roomLive);
 	m_goLive->setEnabled(enabled);
 	Theme::setProp(m_goLive, "kbState", state);
 	m_goLive->setText(text);
@@ -904,8 +994,9 @@ void KaiboDock::requestEndLive()
 		QMessageBox box(QMessageBox::Question, T("Confirm.EndTitle"), T("Confirm.EndText"),
 				QMessageBox::NoButton, this);
 		QPushButton *end = box.addButton(T("Button.End"), QMessageBox::DestructiveRole);
-		box.addButton(T("Common.Cancel"), QMessageBox::RejectRole);
-		box.setDefaultButton(end);
+		QPushButton *cancel = box.addButton(T("Common.Cancel"), QMessageBox::RejectRole);
+		box.setDefaultButton(cancel); // Enter must not end the broadcast
+		box.setEscapeButton(cancel);
 		box.exec();
 		if (box.clickedButton() != end)
 			return;
@@ -956,44 +1047,17 @@ void KaiboDock::showAccountMenu()
 	menu.exec(QCursor::pos());
 }
 
-void KaiboDock::showFaceAuth(const QString &url)
-{
-	QDialog dialog(this);
-	dialog.setObjectName(QStringLiteral("KaiboDock"));
-	dialog.setWindowTitle(T("Face.Title"));
-	dialog.setStyleSheet(theme().styleSheet());
-	auto *col = new QVBoxLayout(&dialog);
-	col->setContentsMargins(24, 24, 24, 20);
-	col->setSpacing(12);
-	auto *heading = label(T("Face.Heading"), "title", &dialog);
-	heading->setAlignment(Qt::AlignCenter);
-	col->addWidget(heading);
-	auto *hint = label(T("Face.Hint"), "caption", &dialog);
-	hint->setAlignment(Qt::AlignCenter);
-	col->addWidget(hint);
-	auto *qr = new QrView(&dialog);
-	qr->setPayload(url);
-	qr->setOverlay(QrView::Overlay::None);
-	col->addWidget(qr, 0, Qt::AlignHCenter);
-	auto *row = new QHBoxLayout();
-	auto *browser = button(T("Face.OpenInBrowser"), "ghost", &dialog);
-	connect(browser, &QPushButton::clicked, &dialog, [url] { QDesktopServices::openUrl(QUrl(url)); });
-	auto *done = button(T("Face.Done"), "primary", &dialog);
-	connect(done, &QPushButton::clicked, &dialog, &QDialog::accept);
-	row->addWidget(browser);
-	row->addStretch(1);
-	row->addWidget(done);
-	col->addLayout(row);
-	if (dialog.exec() == QDialog::Accepted)
-		m_controller->goLive();
-}
-
 void KaiboDock::confirmDeleteData()
 {
+	const QString folder = m_controller->storageDirectory();
+	const bool live = m_controller->state().room.live;
 	QMessageBox box(QMessageBox::Warning, T("Settings.DeleteData"),
-			T("Confirm.DeleteData").arg(m_controller->storageDirectory()), QMessageBox::NoButton, this);
+			(live ? T("Confirm.DeleteDataLive") : T("Confirm.DeleteData")).arg(folder),
+			QMessageBox::NoButton, this);
 	QPushButton *wipe = box.addButton(T("Settings.DeleteData"), QMessageBox::DestructiveRole);
-	box.addButton(T("Common.Cancel"), QMessageBox::RejectRole);
+	QPushButton *cancel = box.addButton(T("Common.Cancel"), QMessageBox::RejectRole);
+	box.setDefaultButton(cancel); // the destructive choice must never be the default
+	box.setEscapeButton(cancel);
 	box.exec();
 	if (box.clickedButton() != wipe)
 		return;

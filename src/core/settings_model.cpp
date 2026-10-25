@@ -8,6 +8,14 @@
 #include <fstream>
 #include <system_error>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace kaibo {
@@ -31,11 +39,8 @@ std::string settingsToJson(const Settings &s)
 		 }},
 		{"recentAreas", areas},
 		{"recentTitles", titles},
-		{"serviceBackup", s.serviceBackup.valid() ? json11::Json(json11::Json::object{
-								    {"type", s.serviceBackup.type},
-								    {"settings", s.serviceBackup.settingsJson},
-							    })
-							  : json11::Json(nullptr)},
+		// serviceBackup is deliberately absent: its JSON can contain another platform's
+		// stream key, so it lives in the sealed service-backup.bin instead.
 		{"legacyImport", legacy},
 	};
 	return json.dump() + "\n";
@@ -71,6 +76,8 @@ bool settingsFromJson(const std::string &text, Settings &out)
 		if (item.is_string() && !item.string_value().empty() && out.recentTitles.size() < 8)
 			out.recentTitles.push_back(item.string_value());
 
+	// Older versions stored the stream-service backup here in plaintext. Keep reading it
+	// so an upgrade can move it into the sealed file, but never write it again.
 	const auto &backup = json["serviceBackup"];
 	if (backup.is_object() && backup["type"].is_string()) {
 		out.serviceBackup.type = backup["type"].string_value();
@@ -95,6 +102,44 @@ void rememberTitle(std::vector<std::string> &titles, const std::string &title, s
 		titles.resize(limit);
 }
 
+namespace {
+
+// writeFileAtomic promises the rename never publishes a half-written file; that also
+// needs the bytes on disk, not just in the OS write cache.
+bool flushToDisk(const fs::path &path, std::string &error)
+{
+#ifdef _WIN32
+	HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+				    FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (handle == INVALID_HANDLE_VALUE) {
+		error = "reopen temp file failed";
+		return false;
+	}
+	const BOOL flushed = FlushFileBuffers(handle);
+	CloseHandle(handle);
+	if (!flushed) {
+		error = "flush temp file failed";
+		return false;
+	}
+	return true;
+#else
+	const int descriptor = ::open(path.c_str(), O_RDONLY);
+	if (descriptor < 0) {
+		error = "reopen temp file failed";
+		return false;
+	}
+	const int flushed = ::fsync(descriptor);
+	::close(descriptor);
+	if (flushed != 0) {
+		error = "flush temp file failed";
+		return false;
+	}
+	return true;
+#endif
+}
+
+} // namespace
+
 bool writeFileAtomic(const std::string &path, const std::string &data, std::string &error)
 {
 	std::error_code ec;
@@ -113,6 +158,14 @@ bool writeFileAtomic(const std::string &path, const std::string &data, std::stri
 			error = "open temp file failed";
 			return false;
 		}
+#ifndef _WIN32
+		// The credentials file travels through this path on macOS/Linux, where it is
+		// plaintext protected only by its mode: never let another local account read the
+		// temp file while it exists, or after a crash that leaves it behind.
+		std::error_code permissionError;
+		fs::permissions(temp, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace,
+				permissionError);
+#endif
 		file.write(data.data(), static_cast<std::streamsize>(data.size()));
 		file.flush();
 		if (!file) {
@@ -121,6 +174,10 @@ bool writeFileAtomic(const std::string &path, const std::string &data, std::stri
 			fs::remove(temp, ec);
 			return false;
 		}
+	}
+	if (!flushToDisk(temp, error)) {
+		fs::remove(temp, ec);
+		return false;
 	}
 
 	if (fs::exists(target, ec)) {

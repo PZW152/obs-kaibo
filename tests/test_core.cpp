@@ -4,6 +4,8 @@
 #include "core/areas.hpp"
 #include "core/bili_client.hpp"
 #include "core/cookies.hpp"
+#include "core/face_auth.hpp"
+#include "core/json_util.hpp"
 #include "core/md5.hpp"
 #include "core/settings_model.hpp"
 #include "core/text.hpp"
@@ -378,7 +380,7 @@ TEST(settings_round_trip_and_defaults)
 	s.options.restoreService = true;
 	s.recentAreas = {86, 92};
 	s.recentTitles = {"今晚冲分", "聊天"};
-	s.serviceBackup = {"rtmp_common", R"({"service":"Twitch","key":"k"})"};
+	s.serviceBackup = {"rtmp_common", R"({"service":"Twitch","key":"secret-key"})"};
 	s.legacyImport = LegacyImport::Dismissed;
 
 	Settings back;
@@ -388,9 +390,21 @@ TEST(settings_round_trip_and_defaults)
 	CHECK(back.options.closeRoomOnExit); // untouched default survives
 	CHECK((back.recentAreas == std::vector<int>{86, 92}));
 	CHECK_EQ(back.recentTitles[0], "今晚冲分");
-	CHECK_EQ(back.serviceBackup.type, "rtmp_common");
-	CHECK_EQ(back.serviceBackup.settingsJson, s.serviceBackup.settingsJson);
 	CHECK(back.legacyImport == LegacyImport::Dismissed);
+	// The stream-service backup can hold another platform's stream key: it belongs in
+	// the sealed service-backup.bin, never in settings.json.
+	CHECK(!back.serviceBackup.valid());
+	const std::string json = settingsToJson(s);
+	CHECK(json.find("serviceBackup") == std::string::npos);
+	CHECK(json.find("secret-key") == std::string::npos);
+
+	// 1.0.2 files still carry it in settings.json; keep reading them so an upgrade can
+	// migrate it into the sealed file.
+	Settings legacy;
+	const std::string old = R"({"schema":1,"serviceBackup":{"type":"rtmp_common","settings":"{\"key\":\"k\"}"}})";
+	CHECK(settingsFromJson(old, legacy));
+	CHECK_EQ(legacy.serviceBackup.type, "rtmp_common");
+	CHECK_EQ(legacy.serviceBackup.settingsJson, R"({"key":"k"})");
 
 	Settings broken;
 	CHECK(!settingsFromJson("not json", broken));
@@ -442,6 +456,194 @@ TEST(secret_seal_round_trip)
 			    opened));
 	CHECK(secret::open(std::string("KBS1\0plain", 10), opened) && opened == "plain");
 }
+
+TEST(device_fingerprint_bootstrap)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("SESSDATA=s; bili_jct=c; DedeUserID=7"));
+
+	http.push(200, R"({"code":0,"data":{"b_3":"B3VAL","b_4":"B4VAL"}})");
+	CHECK(!client.ensureDeviceCookies(1700000000));
+	CHECK_EQ(client.cookies().get("buvid3"), "B3VAL");
+	CHECK_EQ(client.cookies().get("buvid4"), "B4VAL");
+	CHECK_EQ(client.cookies().get("b_nut"), "1700000000");
+	// the lookup endpoint never sees the session cookies
+	CHECK(!hasHeader(http.requests.back(), "Cookie:"));
+	CHECK(http.requests.back().url.find("/x/frontend/finger/spi") != std::string::npos);
+
+	// idempotent: a second call does not repeat the lookup or rewrite the timestamp
+	const size_t before = http.requests.size();
+	CHECK(!client.ensureDeviceCookies(1700000100));
+	CHECK_EQ(http.requests.size(), before);
+	CHECK_EQ(client.cookies().get("b_nut"), "1700000000");
+
+	// failures are reported and leave the jar alone
+	BiliClient offline(http);
+	http.pushNetworkError("offline");
+	CHECK(offline.ensureDeviceCookies(0).kind == ErrorKind::Network);
+	CHECK(offline.cookies().get("buvid3").empty());
+	http.push(200, R"({"code":0,"data":{}})");
+	CHECK(offline.ensureDeviceCookies(0).kind == ErrorKind::Parse);
+
+	// an existing identity is never replaced
+	BiliClient kept(http);
+	kept.setCookies(CookieJar::fromHeader("buvid3=OLD; buvid4=OLD4"));
+	CHECK(!kept.ensureDeviceCookies(1));
+	CHECK_EQ(kept.cookies().get("buvid3"), "OLD");
+	CHECK_EQ(kept.cookies().get("buvid4"), "OLD4");
+}
+
+TEST(start_live_uses_app_identity_and_millisecond_ts)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("SESSDATA=s; bili_jct=c; DedeUserID=7"));
+	http.push(200, R"({"code":0,"data":{"build":9000,"curr_version":"7.10.0"}})");
+	http.push(200, R"({"code":0,"data":{"rtmp":{"addr":"rtmp://x/","code":"?k=1"}}})");
+	LiveStart start;
+	CHECK(!client.startLive(5, 86, start));
+
+	auto queryValueOf = [](const std::string &text) -> std::string {
+		const size_t pos = text.find("ts=");
+		if (pos == std::string::npos)
+			return {};
+		const size_t end = text.find('&', pos);
+		return text.substr(pos + 3, end == std::string::npos ? end : end - pos - 3);
+	};
+	const auto &versionRequest = http.requests[http.requests.size() - 2];
+	const auto &startRequest = http.requests.back();
+	CHECK_EQ(queryValueOf(versionRequest.url).size(), 13u); // milliseconds
+	CHECK_EQ(queryValueOf(startRequest.body).size(), 13u);
+	// app-signed calls identify as the client, not as a link.bilibili.com page
+	CHECK(hasHeader(versionRequest, "Origin: https://api.live.bilibili.com"));
+	CHECK(hasHeader(startRequest, "Origin: https://api.live.bilibili.com"));
+	CHECK(!hasHeader(startRequest, "Referer:"));
+}
+
+TEST(start_live_face_auth_url_fallbacks)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("SESSDATA=s; bili_jct=c; DedeUserID=4242"));
+	auto faceAuth = [&](const char *response) {
+		LiveStart start;
+		http.push(200, R"({"code":0,"data":{"build":9,"curr_version":"7.0"}})");
+		http.push(200, response);
+		client.startLive(1, 2, start);
+		return start.faceAuthUrl;
+	};
+	CHECK_EQ(faceAuth(R"({"code":60024,"message":"need face","data":{"qr":"https://face/qr"}})"),
+		 "https://face/qr");
+	CHECK_EQ(faceAuth(R"({"code":60024,"message":"need face","data":{"qrcode_url":"https://face/q2"}})"),
+		 "https://face/q2");
+	const std::string fallback = faceAuth(R"({"code":60024,"message":"need face","data":{}})");
+	CHECK(fallback.find("face-auth-middle.html") != std::string::npos);
+	CHECK(fallback.find("mid=4242") != std::string::npos);
+}
+
+TEST(api_responses_absorb_set_cookie)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("SESSDATA=s; bili_jct=c"));
+	http.push(200, R"({"code":0,"data":{"isLogin":true,"mid":9,"uname":"x","face":""}})", {"buvid3=SERVER"});
+	Profile profile;
+	CHECK(!client.fetchProfile(profile));
+	CHECK_EQ(client.cookies().get("buvid3"), "SERVER");
+	CHECK_EQ(client.cookies().get("SESSDATA"), "s");
+}
+
+TEST(face_auth_backoff_schedule)
+{
+	CHECK_EQ(faceAuthBackoffMs(0), 1000);
+	CHECK_EQ(faceAuthBackoffMs(1), 2000);
+	CHECK_EQ(faceAuthBackoffMs(2), 4000);
+	CHECK_EQ(faceAuthBackoffMs(3), 8000);
+	CHECK_EQ(kFaceAuthMaxRetries, 5);
+	for (int attempt = 1; attempt <= 10; ++attempt)
+		CHECK(faceAuthBackoffMs(attempt) >= faceAuthBackoffMs(attempt - 1));
+	CHECK(faceAuthBackoffMs(10) <= 8000);
+}
+
+TEST(envelope_requires_a_code)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	Profile profile;
+	// A JSON object without a usable code is not a success envelope: treating it as one
+	// could sign the person out (fetchProfile) or report a room as closed (stopLive).
+	http.push(200, R"({})");
+	CHECK(client.fetchProfile(profile).kind == ErrorKind::Parse);
+	http.push(200, R"({"data":{}})");
+	CHECK(client.fetchProfile(profile).kind == ErrorKind::Parse);
+	http.push(200, R"({"code":null})");
+	CHECK(client.fetchProfile(profile).kind == ErrorKind::Parse);
+	http.push(200, R"({"code":0,"data":{"isLogin":true,"mid":1,"uname":"x","face":""}})");
+	CHECK(!client.fetchProfile(profile));
+
+	// Risk control arrives as HTTP 412 with a normal envelope; keep Bilibili's own words.
+	http.push(412, R"({"code":-412,"message":"请求被拦截"})");
+	const ApiError risk = client.fetchProfile(profile);
+	CHECK(risk.kind == ErrorKind::Api && risk.code == -412 && risk.message == "请求被拦截");
+
+	// A bare non-2xx without an envelope stays an Http error.
+	http.push(502, "bad gateway");
+	CHECK(client.fetchProfile(profile).kind == ErrorKind::Http);
+}
+
+TEST(count_formatting_boundaries)
+{
+	CHECK_EQ(formatCount(999949, UiLocale::English), "999.9K");
+	CHECK_EQ(formatCount(999950, UiLocale::English), "1M"); // never "1000K"
+	CHECK_EQ(formatCount(999999, UiLocale::English), "1M");
+	CHECK_EQ(formatCount(1000000, UiLocale::English), "1M");
+	CHECK_EQ(formatCount(9999, UiLocale::English), "9,999");
+	CHECK_EQ(formatCount(99999499, UiLocale::SimplifiedChinese), "9999.9\xE4\xB8\x87");
+	CHECK_EQ(formatCount(99999500, UiLocale::SimplifiedChinese), "1\xE4\xBA\xBF"); // never "10000万"
+	CHECK_EQ(formatCount(99999999, UiLocale::SimplifiedChinese), "1\xE4\xBA\xBF");
+	CHECK_EQ(formatCount(99999999, UiLocale::TraditionalChinese), "1\xE5\x84\x84"); // 億
+	CHECK_EQ(formatCount(12000, UiLocale::SimplifiedChinese), "1.2\xE4\xB8\x87");
+}
+
+TEST(beijing_time_rejects_impossible_dates)
+{
+	CHECK_EQ(BiliClient::parseBeijingTime("2026-02-31 00:00:00"), 0);
+	CHECK_EQ(BiliClient::parseBeijingTime("2026-02-30 00:00:00"), 0);
+	CHECK_EQ(BiliClient::parseBeijingTime("2026-04-31 10:00:00"), 0);
+	CHECK_EQ(BiliClient::parseBeijingTime("2023-02-29 00:00:00"), 0); // not a leap year
+	CHECK(BiliClient::parseBeijingTime("2024-02-29 00:00:00") > 0);
+	CHECK(BiliClient::parseBeijingTime("2024-01-01 23:59:60") > 0); // leap second
+	CHECK_EQ(BiliClient::parseBeijingTime("2024-01-01 24:00:00"), 0);
+}
+
+TEST(json_int_rejects_overflow_and_garbage)
+{
+	int64_t value = 0;
+	CHECK(!jsonInt(json11::Json("99999999999999999999"), value));
+	CHECK(!jsonInt(json11::Json("-"), value));
+	CHECK(!jsonInt(json11::Json("12a"), value));
+	CHECK(!jsonInt(json11::Json(""), value));
+	CHECK(jsonInt(json11::Json("42"), value) && value == 42);
+	CHECK(jsonInt(json11::Json("-7"), value) && value == -7);
+	CHECK(jsonInt(json11::Json(3), value) && value == 3);
+}
+
+#ifndef _WIN32
+TEST(atomic_write_uses_owner_only_permissions)
+{
+	const std::string dir = "kaibo-test-tmp-mode";
+	const std::string path = dir + "/credentials.bin";
+	std::string error;
+	CHECK(writeFileAtomic(path, "secret", error));
+	CHECK(writeFileAtomic(path, "secret2", error));
+	std::error_code ec;
+	const auto perms = std::filesystem::status(path, ec).permissions();
+	CHECK((perms & std::filesystem::perms::group_all) == std::filesystem::perms::none);
+	CHECK((perms & std::filesystem::perms::others_all) == std::filesystem::perms::none);
+	std::filesystem::remove_all(dir, ec);
+}
+#endif
 
 int main()
 {

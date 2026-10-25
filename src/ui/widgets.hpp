@@ -14,6 +14,7 @@
 #include <vector>
 
 class QHBoxLayout;
+class QKeyEvent;
 class QVBoxLayout;
 
 namespace kaibo::ui {
@@ -72,6 +73,7 @@ signals:
 protected:
 	void paintEvent(QPaintEvent *) override;
 	void mouseReleaseEvent(QMouseEvent *event) override;
+	void keyPressEvent(QKeyEvent *event) override;
 
 private:
 	std::vector<bool> m_modules;

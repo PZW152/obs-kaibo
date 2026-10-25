@@ -31,6 +31,10 @@ public:
 	// Room state × OBS output state, as the person should understand it.
 	enum class Phase { Offline, Live, Reconnecting, RoomOnly, Dropped, StreamOnly };
 	enum class QrPhase { Idle, Loading, Waiting, Scanned, Expired, Failed };
+	// Bilibili's start-live check can ask for a face verification first. The person
+	// scans a code on the phone; the live API only sees that a moment later, so the
+	// controller retries on its own instead of making them scan again.
+	enum class FaceAuth { None, Required, Retrying };
 	enum class ToastKind { Ok, Info, Error };
 
 	struct State {
@@ -65,6 +69,10 @@ public:
 		QrPhase qr = QrPhase::Idle;
 		QString qrUrl;
 		QString qrError;
+
+		FaceAuth face = FaceAuth::None;
+		QString faceAuthUrl;     // the code to show while the person verifies
+		int faceAuthAttempt = 0; // retries already scheduled, 0 while waiting for a scan
 
 		Options options;
 		std::vector<int> recentAreas;
@@ -109,6 +117,11 @@ public:
 
 	// Going live and ending
 	void goLive();
+	// Face verification for the current go-live is believed to be done: retry the
+	// start with backoff until Bilibili accepts it.
+	void confirmFaceAuth();
+	// Give up on the pending face verification (the person closed the prompt).
+	void cancelFaceAuth();
 	void endLive();
 	void closeRoom();
 	void startObsStream();
@@ -124,13 +137,16 @@ signals:
 	void qrChanged();
 	void avatarChanged();
 	void toast(const QString &text, int kind, const QString &detail);
-	void faceAuthRequired(const QString &url);
 
 private:
 	void validateSession(const CookieJar &jar, bool fromLogin);
 	void applyRoom(const RoomInfo &room);
 	void loadAvatar();
 	void pollQr();
+	void handleStartLiveResult(const ApiError &error, const LiveStart &start);
+	void retryFaceAuth();
+	void requestFaceAuthRetry();
+	void clearFaceAuth();
 	void finishLiveStart(const LiveStart &start);
 	void finishRoomClosed(bool restoreAfter);
 	void onOutputEvent(obs::OutputEvent event);
@@ -150,6 +166,7 @@ private:
 	std::unique_ptr<obs::OutputWatcher> m_watcher;
 	QTimer m_pollTimer;
 	QTimer m_qrTimer;
+	QTimer m_faceAuthTimer;
 	QElapsedTimer m_qrAge;
 	std::string m_qrKey;
 	bool m_qrInFlight = false;
@@ -157,6 +174,7 @@ private:
 	bool m_ending = false;
 	bool m_pendingRestore = false;
 	bool m_startedStreamForLive = false;
+	int m_faceAuthAttempt = 0;
 	int m_sessionGeneration = 0; // drops stale replies after sign-out
 };
 
