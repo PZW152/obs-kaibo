@@ -6,6 +6,7 @@
 
 #include <QAccessible>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -228,6 +229,7 @@ QrView::QrView(QWidget *parent) : QWidget(parent)
 {
 	setFixedSize(184, 184);
 	setCursor(Qt::PointingHandCursor);
+	setFocusPolicy(Qt::StrongFocus); // the code can be refreshed with the keyboard too
 	setAccessibleName(T("Login.QrAccessible"));
 }
 
@@ -266,6 +268,17 @@ void QrView::mouseReleaseEvent(QMouseEvent *event)
 	QWidget::mouseReleaseEvent(event);
 }
 
+void QrView::keyPressEvent(QKeyEvent *event)
+{
+	const bool activate = event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
+			      event->key() == Qt::Key_Space;
+	if (activate && (m_overlay == Overlay::Expired || m_overlay == Overlay::Failed)) {
+		emit clicked();
+		return;
+	}
+	QWidget::keyPressEvent(event);
+}
+
 void QrView::paintEvent(QPaintEvent *)
 {
 	QPainter p(this);
@@ -294,6 +307,12 @@ void QrView::paintEvent(QPaintEvent *)
 		p.setRenderHint(QPainter::Antialiasing, true);
 	}
 
+	if (hasFocus()) {
+		p.setBrush(Qt::NoBrush);
+		p.setPen(QPen(theme().color("focus"), 2));
+		p.drawRoundedRect(frame.adjusted(2, 2, -2, -2), radius, radius);
+	}
+
 	if (m_overlay == Overlay::None)
 		return;
 
@@ -309,8 +328,8 @@ void QrView::paintEvent(QPaintEvent *)
 		const QPointF c(width() / 2.0, height() / 2.0 - 14);
 		p.drawEllipse(c, 20, 20);
 		p.drawPixmap(QRectF(c.x() - 11, c.y() - 11, 22, 22).toRect(),
-			     theme().pixmap("check", QColor("#0e0f13"), 22, devicePixelRatioF()));
-		p.setPen(Qt::white);
+			     theme().pixmap("check", theme().color("canvas"), 22, devicePixelRatioF()));
+		p.setPen(theme().color("on-brand"));
 		p.drawText(QRectF(8, c.y() + 26, width() - 16, 40), Qt::AlignHCenter | Qt::TextWordWrap, m_overlayText);
 		return;
 	}

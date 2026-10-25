@@ -36,7 +36,7 @@
 
 /* Buttons */
 #KaiboDock QPushButton, #KaiboDock QToolButton {
-	min-height: 32px;
+	min-height: @control-md@;
 	padding: 0 12px;
 	border-radius: @radius-md@;
 	border: 1px solid @line-strong@;
@@ -59,7 +59,7 @@
 #KaiboDock QPushButton[kbVariant="danger"]:hover { background: @danger-soft@; }
 #KaiboDock QPushButton[kbSize="sm"] { min-height: 26px; padding: 0 8px; font-size: 12px; border-radius: @radius-sm@; }
 #KaiboDock QPushButton[kbVariant="icon"], #KaiboDock QToolButton[kbVariant="icon"] {
-	min-height: 28px; min-width: 28px; max-height: 28px; max-width: 28px;
+	min-height: @control-sm@; min-width: @control-sm@; max-height: @control-sm@; max-width: @control-sm@;
 	padding: 0; border: none; border-radius: @radius-sm@; background: transparent;
 }
 #KaiboDock QPushButton[kbVariant="icon"]:hover, #KaiboDock QToolButton[kbVariant="icon"]:hover { background: @surface-raised@; }
@@ -77,7 +77,7 @@
 
 /* The Go Live button */
 #KaiboDock QPushButton#KbGoLive {
-	min-height: 48px; border-radius: @radius-lg@; border: none;
+	min-height: @control-lg@; border-radius: @radius-lg@; border: none;
 	background: @brand@; color: @on-brand@; font-size: 15px; font-weight: 600;
 }
 #KaiboDock QPushButton#KbGoLive:hover { background: @brand-hover@; }
@@ -90,7 +90,7 @@
 
 /* Fields */
 #KaiboDock QLineEdit, #KaiboDock QPlainTextEdit {
-	min-height: 32px; padding: 0 8px;
+	min-height: @control-md@; padding: 0 8px;
 	border-radius: @radius-sm@; border: 1px solid @line-strong@;
 	background: @surface-raised@; color: @ink@; font-size: 13px;
 	selection-background-color: @brand-soft@; selection-color: @ink@;

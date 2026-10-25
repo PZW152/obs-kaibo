@@ -47,17 +47,18 @@ private:
 	QWidget *buildLoginPage();
 	QWidget *buildMainPage();
 	QWidget *buildSettingsPage();
+	QWidget *buildFaceAuthCard();
 
 	void render();
 	void renderQr();
 	void renderBanner();
+	void renderFaceAuth();
 	void renderGoLive();
 	void renderClock();
 	void applyTheme();
 	void openAreaPicker();
 	void showTitleHistory();
 	void showAccountMenu();
-	void showFaceAuth(const QString &url);
 	void confirmDeleteData();
 	void copyText(const QString &text);
 	void readOptions();
@@ -107,6 +108,16 @@ private:
 	QLabel *m_clock = nullptr;
 	QPushButton *m_goLive = nullptr;
 	QLabel *m_goLiveHint = nullptr;
+
+	// face verification (Bilibili 60024 / 60043)
+	QWidget *m_faceCard = nullptr;
+	QLabel *m_faceHeading = nullptr;
+	QLabel *m_faceHint = nullptr;
+	QrView *m_faceQr = nullptr;
+	QPushButton *m_faceBrowser = nullptr;
+	QPushButton *m_faceCancel = nullptr;
+	QPushButton *m_faceConfirm = nullptr;
+
 	QWidget *m_streamCard = nullptr;
 	QLineEdit *m_server = nullptr;
 	QLineEdit *m_key = nullptr;
