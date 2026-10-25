@@ -5,6 +5,7 @@
 #include "core/text.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <ctime>
 
 namespace kaibo {
@@ -19,6 +20,36 @@ const char *const kUserAgent =
 	"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
 	"Chrome/129.0.0.0 Safari/537.36";
 
+// App-signed endpoints carry this Origin instead of the web live centre one: the
+// request already identifies itself as the live companion through its app key and
+// signature, so it must not also look like a link.bilibili.com page load.
+const char *const kAppOrigin = "Origin: https://api.live.bilibili.com";
+
+// The app key/signature protocol timestamps in milliseconds.
+std::string nowMs()
+{
+	using namespace std::chrono;
+	return std::to_string(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+}
+
+std::string faceAuthWebUrl(const std::string &uid)
+{
+	return "https://www.bilibili.com/blackboard/live/face-auth-middle.html?source_event=400&mid=" + uid;
+}
+
+// 60024 normally carries `data.qr`; the spellings below are what other clients accept.
+// When nothing usable comes back, send the person to the same page 60043 uses rather
+// than showing a generic failure for something they can actually fix.
+std::string faceAuthUrlFromData(const json11::Json &data, const std::string &uid)
+{
+	for (const char *key : {"qr", "qrcode", "qrcode_url", "url"}) {
+		const std::string value = data[key].string_value();
+		if (!value.empty())
+			return value;
+	}
+	return faceAuthWebUrl(uid);
+}
+
 ApiError networkError(const HttpResponse &response)
 {
 	return {ErrorKind::Network, 0, response.transportError};
@@ -29,23 +60,40 @@ ApiError parseEnvelope(const HttpResponse &response, json11::Json &json)
 {
 	if (!response.transportOk())
 		return networkError(response);
-	if (response.status < 200 || response.status >= 300)
-		return {ErrorKind::Http, static_cast<int>(response.status), "HTTP " + std::to_string(response.status)};
 
 	std::string err;
 	json = json11::Json::parse(response.body, err);
-	if (!err.empty() || !json.is_object())
+	const bool parsed = err.empty() && json.is_object();
+	if (response.status < 200 || response.status >= 300) {
+		// Risk control comes back as HTTP 412 carrying a normal error envelope; keep
+		// Bilibili's own code/message instead of a bare "HTTP 412".
+		if (parsed) {
+			int64_t code = 0;
+			if (jsonInt(json["code"], code) && code != 0) {
+				std::string message = json["message"].string_value();
+				if (message.empty())
+					message = json["msg"].string_value();
+				return {ErrorKind::Api, static_cast<int>(code), message};
+			}
+		}
+		return {ErrorKind::Http, static_cast<int>(response.status), "HTTP " + std::to_string(response.status)};
+	}
+	if (!parsed)
 		return {ErrorKind::Parse, 0, err.empty() ? "unexpected response" : err};
 
-	const int code = static_cast<int>(jsonIntOr(json["code"]));
+	// The envelope must actually carry a code: a JSON object without one (error page,
+	// proxy/WAF answer) used to be mistaken for success and could sign the person out.
+	int64_t code = 0;
+	if (!jsonInt(json["code"], code))
+		return {ErrorKind::Parse, 0, "missing code"};
 	if (code == 0)
 		return ApiError::none();
 	std::string message = json["message"].string_value();
 	if (message.empty())
 		message = json["msg"].string_value();
 	if (code == codes::NotLoggedIn)
-		return {ErrorKind::NotLoggedIn, code, message};
-	return {ErrorKind::Api, code, message};
+		return {ErrorKind::NotLoggedIn, static_cast<int>(code), message};
+	return {ErrorKind::Api, static_cast<int>(code), message};
 }
 
 int64_t daysFromCivil(int64_t y, unsigned m, unsigned d)
@@ -58,17 +106,31 @@ int64_t daysFromCivil(int64_t y, unsigned m, unsigned d)
 	return era * 146097 + static_cast<int64_t>(doe) - 719468;
 }
 
+int daysInMonth(int year, int month)
+{
+	static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+	if (month < 1 || month > 12)
+		return 0;
+	if (month == 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)))
+		return 29;
+	return days[month - 1];
+}
+
 } // namespace
 
-std::vector<std::string> BiliClient::headers(bool withCookies, bool form) const
+std::vector<std::string> BiliClient::headers(bool withCookies, bool form, bool appIdentity) const
 {
 	std::vector<std::string> list = {
 		"Accept: application/json, text/plain, */*",
 		"Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
-		"Origin: https://link.bilibili.com",
-		"Referer: https://link.bilibili.com/p/center/index",
 		kUserAgent,
 	};
+	if (appIdentity) {
+		list.push_back(kAppOrigin);
+	} else {
+		list.emplace_back("Origin: https://link.bilibili.com");
+		list.emplace_back("Referer: https://link.bilibili.com/p/center/index");
+	}
 	if (form)
 		list.emplace_back("Content-Type: application/x-www-form-urlencoded; charset=UTF-8");
 	if (withCookies && !m_cookies.empty())
@@ -76,24 +138,36 @@ std::vector<std::string> BiliClient::headers(bool withCookies, bool form) const
 	return list;
 }
 
-HttpResponse BiliClient::get(const std::string &url, bool withCookies)
+// A real browser keeps every cookie the server sets; so does this client, otherwise a
+// session (or the device identity) would silently drift from what Bilibili handed out.
+void BiliClient::absorbCookies(const HttpResponse &response)
+{
+	if (!response.setCookies.empty())
+		m_cookies.apply(response.setCookies);
+}
+
+HttpResponse BiliClient::get(const std::string &url, bool withCookies, bool appIdentity)
 {
 	HttpRequest request;
 	request.url = url;
-	request.headers = headers(withCookies, false);
+	request.headers = headers(withCookies, false, appIdentity);
 	request.timeoutMs = m_timeoutMs;
-	return m_http.send(request);
+	const HttpResponse response = m_http.send(request);
+	absorbCookies(response);
+	return response;
 }
 
-HttpResponse BiliClient::post(const std::string &url, const std::string &form)
+HttpResponse BiliClient::post(const std::string &url, const std::string &form, bool appIdentity)
 {
 	HttpRequest request;
 	request.method = "POST";
 	request.url = url;
 	request.body = form;
-	request.headers = headers(true, true);
+	request.headers = headers(true, true, appIdentity);
 	request.timeoutMs = m_timeoutMs;
-	return m_http.send(request);
+	const HttpResponse response = m_http.send(request);
+	absorbCookies(response);
+	return response;
 }
 
 std::string BiliClient::signParams(std::vector<std::pair<std::string, std::string>> params)
@@ -123,7 +197,7 @@ int64_t BiliClient::parseBeijingTime(const std::string &text)
 	};
 	const int y = field(0, 4), mo = field(5, 2), d = field(8, 2), h = field(11, 2), mi = field(14, 2),
 		  s = field(17, 2);
-	if (y < 2000 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60)
+	if (y < 2000 || mo < 1 || mo > 12 || d < 1 || d > daysInMonth(y, mo) || h > 23 || mi > 59 || s > 60)
 		return 0;
 	const int64_t days = daysFromCivil(y, static_cast<unsigned>(mo), static_cast<unsigned>(d));
 	return days * 86400 + h * 3600 + mi * 60 + s - 8 * 3600;
@@ -302,10 +376,11 @@ ApiError BiliClient::startLive(int64_t roomId, int areaId, LiveStart &result)
 
 	// The start endpoint wants the current live-companion build and version.
 	json11::Json versionJson;
-	const std::string ts = std::to_string(std::time(nullptr));
+	const std::string ts = nowMs();
 	auto error = parseEnvelope(
 		get("https://api.live.bilibili.com/xlive/app-blink/v1/liveVersionInfo/getHomePageLiveVersion?" +
-		    signParams({{"system_version", "2"}, {"ts", ts}})),
+			    signParams({{"system_version", "2"}, {"ts", ts}}),
+		    true, true),
 		versionJson);
 	if (error)
 		return error;
@@ -322,16 +397,14 @@ ApiError BiliClient::startLive(int64_t roomId, int areaId, LiveStart &result)
 					     {"csrf", m_cookies.csrf()},
 					     {"build", std::to_string(build)},
 					     {"version", version},
-					     {"ts", std::to_string(std::time(nullptr))}});
+					     {"ts", nowMs()}});
 	json11::Json json;
-	error = parseEnvelope(post("https://api.live.bilibili.com/room/v1/Room/startLive", form), json);
+	error = parseEnvelope(post("https://api.live.bilibili.com/room/v1/Room/startLive", form, true), json);
 	if (error) {
 		if (error.code == codes::FaceAuthRequired)
-			result.faceAuthUrl = json["data"]["qr"].string_value();
+			result.faceAuthUrl = faceAuthUrlFromData(json["data"], m_cookies.uid());
 		else if (error.code == codes::FaceAuthRequiredAlt)
-			result.faceAuthUrl =
-				"https://www.bilibili.com/blackboard/live/face-auth-middle.html?source_event=400&mid=" +
-				m_cookies.uid();
+			result.faceAuthUrl = faceAuthWebUrl(m_cookies.uid());
 		return error;
 	}
 
@@ -360,7 +433,7 @@ ApiError BiliClient::logout()
 	request.method = "POST";
 	request.url = "https://passport.bilibili.com/login/exit/v2";
 	request.body = formEncode({{"biliCSRF", m_cookies.csrf()}});
-	request.headers = headers(true, true);
+	request.headers = headers(true, true, false);
 	json11::Json json;
 	return parseEnvelope(m_http.send(request), json);
 }
@@ -381,6 +454,35 @@ ApiError BiliClient::fetchBytes(const std::string &url, std::string &bytes)
 	if (response.body.size() > 2 * 1024 * 1024)
 		return {ErrorKind::Parse, 0, "image too large"};
 	bytes = response.body;
+	return ApiError::none();
+}
+
+ApiError BiliClient::fetchDeviceFingerprint(std::string &buvid3, std::string &buvid4)
+{
+	json11::Json json;
+	auto error = parseEnvelope(get("https://api.bilibili.com/x/frontend/finger/spi", false), json);
+	if (error)
+		return error;
+	buvid3 = json["data"]["b_3"].string_value();
+	buvid4 = json["data"]["b_4"].string_value();
+	if (buvid3.empty())
+		return {ErrorKind::Parse, 0, "missing device id"};
+	return ApiError::none();
+}
+
+ApiError BiliClient::ensureDeviceCookies(int64_t nowSeconds)
+{
+	if (!m_cookies.get("buvid3").empty())
+		return ApiError::none();
+	std::string buvid3, buvid4;
+	auto error = fetchDeviceFingerprint(buvid3, buvid4);
+	if (error)
+		return error;
+	m_cookies.set("buvid3", buvid3);
+	if (!buvid4.empty())
+		m_cookies.set("buvid4", buvid4);
+	if (nowSeconds > 0 && m_cookies.get("b_nut").empty())
+		m_cookies.set("b_nut", std::to_string(nowSeconds));
 	return ApiError::none();
 }
 

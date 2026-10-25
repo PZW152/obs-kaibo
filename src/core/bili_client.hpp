@@ -98,15 +98,28 @@ public:
 	ApiError logout();
 	ApiError fetchBytes(const std::string &url, std::string &bytes);
 
+	// Device id lookup used by ensureDeviceCookies(); exposed for tests.
+	ApiError fetchDeviceFingerprint(std::string &buvid3, std::string &buvid4);
+	// Bilibili's web client mints a stable device identity (buvid3/buvid4) once and
+	// sends it with every request. Without one the live APIs see a new device on each
+	// call, which is one of the things that makes Bilibili ask for face verification
+	// again and again. An existing identity is never replaced. Best effort: on failure
+	// the cookies stay as they were.
+	ApiError ensureDeviceCookies(int64_t nowSeconds);
+
 	// Exposed for tests: Bilibili's app signature over sorted, URL-encoded params.
 	static std::string signParams(std::vector<std::pair<std::string, std::string>> params);
 	// "2026-10-20 21:05:00" in China Standard Time → Unix seconds; 0 when invalid.
 	static int64_t parseBeijingTime(const std::string &text);
 
 private:
-	HttpResponse get(const std::string &url, bool withCookies = true);
-	HttpResponse post(const std::string &url, const std::string &form);
-	std::vector<std::string> headers(bool withCookies, bool form) const;
+	// `appIdentity` marks endpoints called with the live-companion app key and
+	// signature: those are client calls, so they must not also claim to come from the
+	// web live centre (see the header note in the .cpp).
+	HttpResponse get(const std::string &url, bool withCookies = true, bool appIdentity = false);
+	HttpResponse post(const std::string &url, const std::string &form, bool appIdentity = false);
+	std::vector<std::string> headers(bool withCookies, bool form, bool appIdentity) const;
+	void absorbCookies(const HttpResponse &response);
 
 	HttpTransport &m_http;
 	CookieJar m_cookies;

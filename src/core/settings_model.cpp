@@ -113,6 +113,14 @@ bool writeFileAtomic(const std::string &path, const std::string &data, std::stri
 			error = "open temp file failed";
 			return false;
 		}
+#ifndef _WIN32
+		// The credentials file travels through this path on macOS/Linux, where it is
+		// plaintext protected only by its mode: never let another local account read the
+		// temp file while it exists, or after a crash that leaves it behind.
+		std::error_code permissionError;
+		fs::permissions(temp, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace,
+				permissionError);
+#endif
 		file.write(data.data(), static_cast<std::streamsize>(data.size()));
 		file.flush();
 		if (!file) {

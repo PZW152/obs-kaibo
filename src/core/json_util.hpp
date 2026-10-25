@@ -3,6 +3,7 @@
 
 #include "vendor/json11/json11.hpp"
 
+#include <charconv>
 #include <cstdint>
 #include <string>
 
@@ -21,20 +22,11 @@ inline bool jsonInt(const json11::Json &value, int64_t &out)
 		if (s.empty())
 			return false;
 		int64_t v = 0;
-		bool negative = false;
-		size_t i = 0;
-		if (s[0] == '-') {
-			negative = true;
-			i = 1;
-		}
-		if (i >= s.size())
+		// from_chars rejects out-of-range input instead of overflowing (UB).
+		const auto result = std::from_chars(s.data(), s.data() + s.size(), v);
+		if (result.ec != std::errc() || result.ptr != s.data() + s.size())
 			return false;
-		for (; i < s.size(); ++i) {
-			if (s[i] < '0' || s[i] > '9')
-				return false;
-			v = v * 10 + (s[i] - '0');
-		}
-		out = negative ? -v : v;
+		out = v;
 		return true;
 	}
 	if (value.is_bool()) {
