@@ -56,10 +56,15 @@ Settings Store::loadSettings()
 		settings.serviceBackup = sealed;
 	} else if (settings.serviceBackup.valid()) {
 		// 1.0.2 kept this in plaintext in settings.json: move it into the sealed file and
-		// rewrite settings.json without it.
+		// rewrite settings.json without it. The rewrite rotates the old plaintext content
+		// into settings.json.bak, so that copy has to go as well.
 		saveServiceBackup(settings.serviceBackup);
-		if (!saveSettings(settings))
+		if (saveSettings(settings)) {
+			std::error_code ec;
+			fs::remove(fs::u8path(path("settings.json.bak")), ec);
+		} else {
 			obs_log(LOG_WARNING, "could not remove the plaintext stream-service backup from settings.json");
+		}
 	}
 	return settings;
 }
