@@ -16,13 +16,14 @@ Kaibo 只在一个文件夹里保存自己的数据，不写注册表、不装�
 
 | 文件 | 内容 |
 | --- | --- |
-| `settings.json`（及 `.bak`） | 选项、最近使用的分区和标题、关播后要恢复的推流设置备份 |
-| `credentials.bin`（及 `.bak`） | B 站登录 Cookie（SESSDATA、bili_jct 等） |
+| `settings.json`（及 `.bak`） | 选项、最近使用的分区和标题、关播后要恢复的推流设置备份（见下方说明） |
+| `credentials.bin`（及 `.bak`） | B 站登录 Cookie（SESSDATA、bili_jct 等）以及 B 站分配的设备标识（buvid3、buvid4、b_nut） |
 
 - **Windows**：`credentials.bin` 用 Windows DPAPI 加密，只有同一台电脑上的同一个 Windows 账号能解密。
 - **macOS / Linux**：以 `0600` 权限保存（只有你的系统账号可读），未额外加密。
-- 写入采用「先写临时文件再替换」，并保留上一版 `.bak`，断电或崩溃不会留下损坏的文件。
-- 推流码只保存在内存里，Kaibo 不会把它写进自己的文件；日志中不会出现 Cookie 或推流码。
+- 写入采用「先写临时文件再替换」，并保留上一版 `.bak`：进程崩溃或写入失败不会留下损坏的文件（断电时文件是否完整取决于文件系统）。临时文件在 macOS / Linux 上以 `0600` 创建，不会出现短暂的可读窗口。
+- 推流码只保存在内存里，Kaibo 不会把 **B 站给的**推流码写进自己的文件；日志中不会出现 Cookie 或推流码。
+- 例外：开启「关播后恢复原来的推流设置」后，Kaibo 会在 `settings.json` 里备份**被替换掉的那套推流设置**（与 OBS 自己保存在配置里的内容相同，若原来是自定义推流，其中会包含那个平台的推流码）。这份备份和其它设置一样以明文保存；关掉该选项（且当前没有直播）就会把它清空。不需要恢复功能的话请不要开启。
 
 ## Kaibo 修改的 OBS 设置
 
@@ -35,7 +36,7 @@ Kaibo 会把两个快捷键（「一键开播」「结束直播」）的绑定�
 Kaibo 只连接哔哩哔哩的 HTTPS 接口：
 
 - `passport.bilibili.com`、`passport.biligame.com`：扫码登录、退出登录
-- `api.bilibili.com`：读取账号昵称与头像地址
+- `api.bilibili.com`：读取账号昵称、头像地址，以及一次性获取设备标识（`x/frontend/finger/spi`，让请求和官方网页一致；该标识只是 B 站随机分配的字符串，不是硬件指纹）
 - `api.live.bilibili.com`：直播间信息、分区列表、修改标题/分区/公告、开播、关播
 - `i0.hdslb.com` 等 B 站图片域名：下载你自己的头像
 

@@ -19,7 +19,7 @@
 
 Kaibo is an OBS Studio dock. After signing in once, going live is one button: it syncs any edited title, area and room announcement to Bilibili, opens your live room, writes the RTMP server and key into OBS and (by default) starts streaming. Ending is one button too: it stops OBS streaming, closes the room and tells you how long you were live.
 
-Also: in-dock QR sign-in with scanned/expired states, area search with recents, title history, a clear status for every combination of room and OBS state (with the one action that fixes it), one-click restream after a drop, closing the room when OBS exits, restoring your previous stream settings after ending (for multi-platform streamers), the face-verification QR when Bilibili asks for it, hotkeys, dark/light themes that follow OBS, and Simplified Chinese / Traditional Chinese / English. On Windows the sign-in is encrypted with DPAPI.
+Also: in-dock QR sign-in with scanned/expired states, area search with recents, title history, a clear status for every combination of room and OBS state (with the one action that fixes it), one-click restream after a drop, closing the room when OBS exits, restoring your previous stream settings after ending (for multi-platform streamers), the face-verification QR (with automatic retry) when Bilibili asks for it, hotkeys, dark/light themes that follow OBS, and Simplified Chinese / Traditional Chinese / English. On Windows the sign-in is encrypted with DPAPI.
 
 ## Install
 
