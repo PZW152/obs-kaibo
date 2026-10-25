@@ -81,9 +81,14 @@ CookieJar Store::loadCredentials()
 bool Store::saveCredentials(const CookieJar &jar)
 {
 	const std::string plain = json11::Json(json11::Json::object{{"v", 1}, {"cookies", jar.header()}}).dump();
+	const std::string sealed = secret::seal(plain);
+	if (sealed.empty()) {
+		obs_log(LOG_WARNING, "could not encrypt the sign-in; nothing was written");
+		return false;
+	}
 	std::string error;
 	const std::string file = path("credentials.bin");
-	if (!writeFileAtomic(file, secret::seal(plain), error)) {
+	if (!writeFileAtomic(file, sealed, error)) {
 		obs_log(LOG_WARNING, "could not save sign-in: %s", error.c_str());
 		return false;
 	}

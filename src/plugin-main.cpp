@@ -126,6 +126,9 @@ bool obs_module_load(void)
 	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"), g_dock.data())) {
 		obs_log(LOG_ERROR, "could not add the Kaibo dock");
 		delete g_dock.data();
+		// OBS does not call obs_module_unload() when load fails, so clean up here.
+		kaibo::worker::shutdown();
+		delete g_controller.data();
 		return false;
 	}
 

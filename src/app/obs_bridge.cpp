@@ -18,6 +18,21 @@ bool isBilibiliServer(const char *server)
 
 } // namespace
 
+// Captures the service Kaibo is about to replace. The backup can be persisted across
+// sessions (crash while live), so it must be refreshed whenever the current service is a
+// real user service again — "a backup exists" does not mean "it is still the right one".
+static void captureService(ServiceBackup &backup, obs_service_t *current)
+{
+	obs_data_t *settings = obs_service_get_settings(current);
+	const char *type = obs_service_get_type(current);
+	const char *currentServer = obs_data_get_string(settings, "server");
+	if (type && !isBilibiliServer(currentServer)) {
+		backup.type = type;
+		backup.settingsJson = obs_data_get_json(settings);
+	}
+	obs_data_release(settings);
+}
+
 bool applyStreamService(const std::string &server, const std::string &key, ServiceBackup *backup, std::string &error)
 {
 	if (obs_frontend_streaming_active()) {
@@ -25,17 +40,9 @@ bool applyStreamService(const std::string &server, const std::string &key, Servi
 		return false;
 	}
 
-	if (backup && !backup->valid()) {
-		if (obs_service_t *current = obs_frontend_get_streaming_service()) {
-			obs_data_t *settings = obs_service_get_settings(current);
-			const char *type = obs_service_get_type(current);
-			const char *currentServer = obs_data_get_string(settings, "server");
-			if (type && !isBilibiliServer(currentServer)) {
-				backup->type = type;
-				backup->settingsJson = obs_data_get_json(settings);
-			}
-			obs_data_release(settings);
-		}
+	if (backup) {
+		if (obs_service_t *current = obs_frontend_get_streaming_service())
+			captureService(*backup, current);
 	}
 
 	obs_data_t *settings = obs_data_create();

@@ -48,16 +48,20 @@ std::string seal(const std::string &plain)
 	DATA_BLOB in = blobOf(plain);
 	DATA_BLOB entropy = entropyBlob();
 	DATA_BLOB sealed{};
-	if (CryptProtectData(&in, L"Kaibo", &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &sealed)) {
-		out.push_back('\x01');
-		out.append(reinterpret_cast<const char *>(sealed.pbData), sealed.cbData);
-		LocalFree(sealed.pbData);
-		return out;
+	if (!CryptProtectData(&in, L"Kaibo", &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &sealed)) {
+		// Never silently downgrade the credentials file to plaintext: an empty result
+		// makes the caller report the save failure instead.
+		return {};
 	}
-#endif
+	out.push_back('\x01');
+	out.append(reinterpret_cast<const char *>(sealed.pbData), sealed.cbData);
+	LocalFree(sealed.pbData);
+	return out;
+#else
 	out.push_back('\x00');
 	out += plain;
 	return out;
+#endif
 }
 
 bool open(const std::string &sealed, std::string &plain)
