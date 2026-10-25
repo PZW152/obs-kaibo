@@ -380,7 +380,7 @@ TEST(settings_round_trip_and_defaults)
 	s.options.restoreService = true;
 	s.recentAreas = {86, 92};
 	s.recentTitles = {"今晚冲分", "聊天"};
-	s.serviceBackup = {"rtmp_common", R"({"service":"Twitch","key":"k"})"};
+	s.serviceBackup = {"rtmp_common", R"({"service":"Twitch","key":"secret-key"})"};
 	s.legacyImport = LegacyImport::Dismissed;
 
 	Settings back;
@@ -390,9 +390,21 @@ TEST(settings_round_trip_and_defaults)
 	CHECK(back.options.closeRoomOnExit); // untouched default survives
 	CHECK((back.recentAreas == std::vector<int>{86, 92}));
 	CHECK_EQ(back.recentTitles[0], "今晚冲分");
-	CHECK_EQ(back.serviceBackup.type, "rtmp_common");
-	CHECK_EQ(back.serviceBackup.settingsJson, s.serviceBackup.settingsJson);
 	CHECK(back.legacyImport == LegacyImport::Dismissed);
+	// The stream-service backup can hold another platform's stream key: it belongs in
+	// the sealed service-backup.bin, never in settings.json.
+	CHECK(!back.serviceBackup.valid());
+	const std::string json = settingsToJson(s);
+	CHECK(json.find("serviceBackup") == std::string::npos);
+	CHECK(json.find("secret-key") == std::string::npos);
+
+	// 1.0.2 files still carry it in settings.json; keep reading them so an upgrade can
+	// migrate it into the sealed file.
+	Settings legacy;
+	const std::string old = R"({"schema":1,"serviceBackup":{"type":"rtmp_common","settings":"{\"key\":\"k\"}"}})";
+	CHECK(settingsFromJson(old, legacy));
+	CHECK_EQ(legacy.serviceBackup.type, "rtmp_common");
+	CHECK_EQ(legacy.serviceBackup.settingsJson, R"({"key":"k"})");
 
 	Settings broken;
 	CHECK(!settingsFromJson("not json", broken));

@@ -88,19 +88,56 @@ Source: "kaibo.ico"; DestDir: "{app}"; Flags: ignoreversion
 const
   LegacyDir = '{commonappdata}\obs-studio\plugins\bilibili-stream-for-obs';
 
-function IsObsRunning(): Boolean;
+{ WMI can be disabled or broken (stripped images, security software). Report whether the
+  service could answer at all, so the caller can use tasklist instead of silently
+  treating "no answer" as "OBS is not running". }
+function TryWmiObsRunning(var Running: Boolean): Boolean;
 var
   Locator, Service, Processes: Variant;
 begin
   Result := False;
+  Running := False;
   try
     Locator := CreateOleObject('WbemScripting.SWbemLocator');
     Service := Locator.ConnectServer('', 'root\CIMV2', '', '');
     Processes := Service.ExecQuery('SELECT ProcessId FROM Win32_Process WHERE Name="obs64.exe"');
-    Result := Processes.Count > 0;
+    Running := Processes.Count > 0;
+    Result := True;
   except
-    Result := False; { WMI unavailable: do not block the install }
+    Result := False;
   end;
+end;
+
+{ Fallback when WMI is unavailable: tasklist is a plain process call, and its output
+  only contains the image name when the process exists (the "no tasks" notice is
+  localised and does not mention it). }
+function TasklistSaysObsRunning(): Boolean;
+var
+  OutputFile: String;
+  ExitCode: Integer;
+  Output: String;
+begin
+  Result := False;
+  OutputFile := ExpandConstant('{tmp}\kaibo-tasklist.txt');
+  if not Exec(ExpandConstant('{cmd}'),
+              '/c tasklist /FI "IMAGENAME eq obs64.exe" /NH > "' + OutputFile + '"',
+              '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    Exit;
+  if not FileExists(OutputFile) then
+    Exit;
+  if LoadStringFromUTF8File(OutputFile, Output) then
+    Result := Pos('obs64.exe', Lowercase(Output)) > 0;
+  DeleteFile(OutputFile);
+end;
+
+function IsObsRunning(): Boolean;
+var
+  Running: Boolean;
+begin
+  if TryWmiObsRunning(Running) then
+    Result := Running
+  else
+    Result := TasklistSaysObsRunning();
 end;
 
 { Silent comes from the caller: UninstallSilent may only be called while

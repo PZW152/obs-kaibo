@@ -15,8 +15,9 @@ namespace fs = std::filesystem;
 namespace kaibo {
 namespace {
 
-const char *const kOwnedFiles[] = {"settings.json",   "settings.json.bak",   "settings.json.tmp",
-				   "credentials.bin", "credentials.bin.bak", "credentials.bin.tmp"};
+const char *const kOwnedFiles[] = {"settings.json",      "settings.json.bak",      "settings.json.tmp",
+				   "credentials.bin",    "credentials.bin.bak",    "credentials.bin.tmp",
+				   "service-backup.bin", "service-backup.bin.bak", "service-backup.bin.tmp"};
 
 std::string moduleConfigDir()
 {
@@ -41,12 +42,24 @@ Settings Store::loadSettings()
 {
 	Settings settings;
 	std::string text;
-	if (!readFile(path("settings.json"), text))
+	if (!readFile(path("settings.json"), text)) {
+		settings.serviceBackup = loadServiceBackup();
 		return settings;
+	}
 	if (!settingsFromJson(text, settings)) {
 		obs_log(LOG_WARNING, "settings.json is unreadable; trying the backup");
 		if (!readFile(path("settings.json.bak"), text) || !settingsFromJson(text, settings))
 			obs_log(LOG_WARNING, "no usable settings backup; using defaults");
+	}
+	const ServiceBackup sealed = loadServiceBackup();
+	if (sealed.valid()) {
+		settings.serviceBackup = sealed;
+	} else if (settings.serviceBackup.valid()) {
+		// 1.0.2 kept this in plaintext in settings.json: move it into the sealed file and
+		// rewrite settings.json without it.
+		saveServiceBackup(settings.serviceBackup);
+		if (!saveSettings(settings))
+			obs_log(LOG_WARNING, "could not remove the plaintext stream-service backup from settings.json");
 	}
 	return settings;
 }
@@ -101,6 +114,58 @@ void Store::clearCredentials()
 {
 	std::error_code ec;
 	for (const char *name : {"credentials.bin", "credentials.bin.bak", "credentials.bin.tmp"})
+		fs::remove(fs::u8path(path(name)), ec);
+}
+
+ServiceBackup Store::loadServiceBackup()
+{
+	std::string sealed;
+	if (!readFile(path("service-backup.bin"), sealed))
+		return {};
+	std::string plain;
+	if (!secret::open(sealed, plain)) {
+		obs_log(LOG_WARNING, "stored stream-service backup could not be decrypted; ignoring it");
+		return {};
+	}
+	std::string err;
+	const auto json = json11::Json::parse(plain, err);
+	if (!err.empty() || !json.is_object())
+		return {};
+	ServiceBackup backup;
+	backup.type = json["type"].string_value();
+	backup.settingsJson = json["settings"].string_value();
+	return backup;
+}
+
+bool Store::saveServiceBackup(const ServiceBackup &backup)
+{
+	if (!backup.valid()) {
+		clearServiceBackup();
+		return true;
+	}
+	const std::string plain =
+		json11::Json(json11::Json::object{{"v", 1}, {"type", backup.type}, {"settings", backup.settingsJson}})
+			.dump();
+	const std::string sealed = secret::seal(plain);
+	if (sealed.empty()) {
+		obs_log(LOG_WARNING, "could not encrypt the stream-service backup; nothing was written");
+		return false;
+	}
+	std::string error;
+	const std::string file = path("service-backup.bin");
+	if (!writeFileAtomic(file, sealed, error)) {
+		obs_log(LOG_WARNING, "could not save the stream-service backup: %s", error.c_str());
+		return false;
+	}
+	secret::restrictPermissions(file);
+	secret::restrictPermissions(file + ".bak");
+	return true;
+}
+
+void Store::clearServiceBackup()
+{
+	std::error_code ec;
+	for (const char *name : {"service-backup.bin", "service-backup.bin.bak", "service-backup.bin.tmp"})
 		fs::remove(fs::u8path(path(name)), ec);
 }
 

@@ -176,6 +176,7 @@ void LiveController::onStreamingStopped()
 		std::string error;
 		if (obs::restoreStreamService(m_settings.serviceBackup, error)) {
 			m_settings.serviceBackup = {};
+			m_store.clearServiceBackup();
 			persistSettings();
 		} else {
 			obs_log(LOG_WARNING, "could not restore stream settings: %s", error.c_str());
@@ -241,6 +242,7 @@ void LiveController::shutdownForExit()
 		std::string error;
 		if (obs::restoreStreamService(m_settings.serviceBackup, error)) {
 			m_settings.serviceBackup = {};
+			m_store.clearServiceBackup();
 			m_store.saveSettings(m_settings);
 			obs_log(LOG_INFO, "restored the previous stream settings on exit");
 		} else {
@@ -906,6 +908,10 @@ void LiveController::finishLiveStart(const LiveStart &start)
 			notify(T("Error.ApplyService"), ToastKind::Error);
 		} else {
 			m_state.streamTargetIsBilibili = true;
+			// Keep the captured service in the sealed file: it can contain another
+			// platform's stream key, so it never goes into settings.json.
+			if (backup && backup->valid())
+				m_store.saveServiceBackup(*backup);
 			if (m_state.options.autoStartStream) {
 				obs::startStreaming();
 				notify(T("Msg.LiveStarted"), ToastKind::Ok);
@@ -969,10 +975,12 @@ void LiveController::finishRoomClosed(bool restoreAfter)
 			m_pendingRestore = true; // after OBS has finished stopping
 		} else {
 			std::string error;
-			if (obs::restoreStreamService(m_settings.serviceBackup, error))
+			if (obs::restoreStreamService(m_settings.serviceBackup, error)) {
 				m_settings.serviceBackup = {};
-			else
+				m_store.clearServiceBackup();
+			} else {
 				obs_log(LOG_WARNING, "could not restore stream settings: %s", error.c_str());
+			}
 		}
 	}
 	persistSettings();
@@ -997,8 +1005,10 @@ void LiveController::setOptions(const Options &options)
 	m_state.options = options;
 	// The captured service belongs to the live session, not to the checkbox: while a
 	// room is live, toggling the option off and on again must not throw it away.
-	if (!options.restoreService && !m_state.room.live)
+	if (!options.restoreService && !m_state.room.live) {
 		m_settings.serviceBackup = {};
+		m_store.clearServiceBackup();
+	}
 	persistSettings();
 	emit changed();
 }

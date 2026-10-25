@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.0.3 — 2026-10-25
 
 ### Fixed
+- The replaced OBS stream service (which can contain another platform's stream key) is now sealed in `service-backup.bin` with the same protection as the sign-in and is no longer written to `settings.json`; a 1.0.2 plaintext backup is migrated on the first start.
+- Atomic writes are flushed to disk before the rename, so a power loss cannot publish a partial settings/credentials file.
+- The Windows installer falls back to `tasklist` when WMI is unavailable, so it still refuses to overwrite a DLL OBS has loaded.
 - A JSON answer without a `code` field is no longer mistaken for success: that could sign the person out (the profile call read "not logged in") or report a live room as closed.
 - HTTP 412 (Bilibili's risk-control answer) now shows Bilibili's own code and message instead of a bare "HTTP 412".
 - Counts no longer round across a unit boundary ("1000K" is now "1M", "10000万" is now "1亿").
