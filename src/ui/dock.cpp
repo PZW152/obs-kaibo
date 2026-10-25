@@ -822,14 +822,14 @@ void KaiboDock::renderGoLive()
 	} else if (s.busy == Busy::Ending) {
 		state = QStringLiteral("busy");
 		text = T("Button.Stopping");
-	} else if (s.face == FaceAuth::Required) {
-		text = T("Face.WaitingButton");
-		hint = T("Face.WaitingHint");
 	} else if (roomLive) {
 		state = QStringLiteral("end");
 		text = T("Button.End");
 		hint = T("Hint.Live");
 		icon = QStringLiteral("stop");
+	} else if (s.face == FaceAuth::Required) {
+		text = T("Face.WaitingButton");
+		hint = T("Face.WaitingHint");
 	} else if (s.roomId <= 0) {
 		enabled = false;
 		text = T("Status.NoRoom");
@@ -844,8 +844,9 @@ void KaiboDock::renderGoLive()
 		icon = QStringLiteral("play");
 	}
 	// A busy controller or a pending verification means a click cannot do anything:
-	// keep the button visibly (and actually) disabled instead of swallowing clicks.
-	enabled = enabled && s.busy == Busy::None && s.face == FaceAuth::None;
+	// keep the button visibly (and actually) disabled instead of swallowing clicks. A
+	// live room always offers "End", even if a stale verification state is still around.
+	enabled = enabled && s.busy == Busy::None && (s.face == FaceAuth::None || roomLive);
 	m_goLive->setEnabled(enabled);
 	Theme::setProp(m_goLive, "kbState", state);
 	m_goLive->setText(text);

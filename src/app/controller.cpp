@@ -304,7 +304,10 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 			// rotated session cookie) even when the follow-up request failed.
 			const CookieJar &fresh = result->cookies.hasSession() ? result->cookies : jar;
 			m_cookies = fresh;
-			m_store.saveCredentials(fresh);
+			// Do not rewrite the encrypted file on every offline retry: save on success,
+			// and on failure only when the server actually changed something.
+			if (!result->error || fresh.header() != jar.header())
+				m_store.saveCredentials(fresh);
 			if (result->error) {
 				// Keep the session: most likely offline. The poll timer retries.
 				m_state.offline = result->error.kind == ErrorKind::Network;
@@ -514,6 +517,10 @@ void LiveController::applyRoom(const RoomInfo &room)
 
 	m_state.room = room;
 	m_state.roomLoaded = true;
+	// The broadcast may have been started from the web live centre or the app right after
+	// the verification; there is nothing left to verify here.
+	if (room.live)
+		clearFaceAuth();
 	// Follow the server for fields the person has not edited.
 	if (m_state.titleDraft.isEmpty() || m_state.titleDraft == oldTitle)
 		m_state.titleDraft = qs(room.title);
@@ -807,6 +814,8 @@ void LiveController::clearFaceAuth()
 {
 	m_faceAuthTimer.stop();
 	m_faceAuthAttempt = 0;
+	if (m_state.face == FaceAuth::Retrying && m_state.busy == Busy::GoingLive)
+		m_state.busy = Busy::None; // the retry loop owned the busy flag
 	m_state.face = FaceAuth::None;
 	m_state.faceAuthUrl.clear();
 	m_state.faceAuthAttempt = 0;
@@ -816,6 +825,8 @@ void LiveController::clearFaceAuth()
 // reaches Bilibili's live API a moment after the person finishes it.
 void LiveController::retryFaceAuth()
 {
+	if (m_state.face != FaceAuth::Retrying)
+		return; // cancelled, or the room turned out to be live already
 	if (m_state.auth != Auth::SignedIn || m_faceAuthAttempt >= kFaceAuthMaxRetries) {
 		const int attempts = m_faceAuthAttempt;
 		m_state.busy = Busy::None;
@@ -854,6 +865,10 @@ void LiveController::requestFaceAuthRetry()
 		[this, result, generation] {
 			if (generation != m_sessionGeneration)
 				return;
+			if (m_state.face == FaceAuth::None) {
+				m_state.busy = Busy::None;
+				return; // cancelled while the request was in flight
+			}
 			if (!result->error) {
 				m_state.busy = Busy::None;
 				finishLiveStart(result->start);
