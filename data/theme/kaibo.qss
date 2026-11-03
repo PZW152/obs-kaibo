@@ -80,7 +80,7 @@
 /* ToggleSwitch paints itself (track, knob, focus ring); keep the generic button
    chrome from drawing behind it. */
 #KaiboDock QPushButton[kbSwitch="true"] {
-	min-height: 0; min-width: 0; padding: 0; border: none;
+	min-height: 0px; min-width: 0px; padding: 0; border: none;
 	background: transparent; border-radius: @radius-pill@;
 }
 #KaiboDock QPushButton[kbSwitch="true"]:hover { background: transparent; border: none; }
