@@ -136,15 +136,23 @@ void onFrontendEvent(enum obs_frontend_event event, void *)
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 		controller->startup();
 		// OBS applies the saved dock layout around this event (and can drop the
-		// dock again a moment later); on the first start also wait for the
-		// first-run wizard to close and the main window to get focus.
-		placeFirstRunDock();
+		// dock again a moment later). On the very first start OBS opens its
+		// first-run wizard right after this event, so do not place the dock
+		// immediately: wait until the wizard is closed and the main window is
+		// focused, otherwise the dock would stay a floating window.
+		if (!g_dockFirstRunKnown) {
+			const QString dataDir = g_controller->storageDirectory();
+			g_dockFirstRun = !QFileInfo::exists(QDir(dataDir).filePath(QStringLiteral(".dock-first-run")));
+			g_dockFirstRunKnown = true;
+		}
 		if (g_dockFirstRun && !g_dockMarkerWritten) {
 			if (g_mainWindow)
 				g_mainWindow->installEventFilter(new DockPlacementFilter(g_mainWindow.data()));
-			for (int delay : {1000, 3000, 8000, 15000})
+			for (int delay : {3000, 6000, 12000, 20000, 30000})
 				QTimer::singleShot(delay, [] { placeFirstRunDock(); });
 		} else {
+			// Existing installation: repair a dock that OBS's layout dropped.
+			ensureDockManaged();
 			QTimer::singleShot(250, [] { ensureDockManaged(); });
 		}
 		break;
