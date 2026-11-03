@@ -23,6 +23,7 @@ published by the Free Software Foundation. See LICENSE.
 #include <QDockWidget>
 #include <QMainWindow>
 #include <QPointer>
+#include <QTimer>
 
 #include <utility>
 
@@ -38,8 +39,17 @@ constexpr const char *kHotkeyEndLive = "kaibo.endlive";
 QPointer<kaibo::LiveController> g_controller;
 QPointer<kaibo::ui::KaiboDock> g_dock;
 QPointer<QDockWidget> g_dockWidget;
+QPointer<QMainWindow> g_mainWindow;
 obs_hotkey_id g_goLiveHotkey = OBS_INVALID_HOTKEY_ID;
 obs_hotkey_id g_endLiveHotkey = OBS_INVALID_HOTKEY_ID;
+
+// No-op unless OBS's layout restore dropped the dock from the main window (this
+// happens on the first start, where a new user would otherwise see no panel).
+void ensureDockManaged()
+{
+	if (g_mainWindow && g_dockWidget)
+		kaibo::obsfrontend::ensureDockManaged(g_mainWindow.data(), g_dockWidget.data(), kDockId);
+}
 
 void onFrontendEvent(enum obs_frontend_event event, void *)
 {
@@ -49,6 +59,10 @@ void onFrontendEvent(enum obs_frontend_event event, void *)
 	switch (event) {
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 		controller->startup();
+		// OBS applies the saved dock layout around this event, so check once
+		// now and once after the event loop has settled.
+		ensureDockManaged();
+		QTimer::singleShot(200, [] { ensureDockManaged(); });
 		break;
 	case OBS_FRONTEND_EVENT_STREAMING_STARTING:
 		controller->onStreamingStarting();
@@ -123,6 +137,7 @@ bool obs_module_load(void)
 	}
 
 	kaibo::worker::start();
+	g_mainWindow = mainWindow;
 	g_controller = new kaibo::LiveController(mainWindow);
 	g_dock = new kaibo::ui::KaiboDock(g_controller.data());
 	const kaibo::obsfrontend::DockRegistration dock =
@@ -139,6 +154,7 @@ bool obs_module_load(void)
 
 	if (auto *action = static_cast<QAction *>(obs_frontend_add_tools_menu_qaction(obs_module_text("Menu.Tools")))) {
 		QObject::connect(action, &QAction::triggered, [] {
+			ensureDockManaged();
 			if (g_dockWidget)
 				kaibo::obsfrontend::showDock(g_dockWidget.data());
 		});
