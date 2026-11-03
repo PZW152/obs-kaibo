@@ -67,7 +67,9 @@ function(_setup_obs_studio)
       set(_obs_dependency_component "Development")
       set(_cmake_arch "-A ${arch},version=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
     endif()
-    set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION} -DCMAKE_ENABLE_SCRIPTING=OFF")
+    # _cmake_extra must be a CMake list: on POSIX the nested configure receives
+    # the argv directly, so space-joined flags would arrive as one argument.
+    set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION}" "-DCMAKE_ENABLE_SCRIPTING=OFF")
   elseif(OS_MACOS)
     set(_cmake_generator "Xcode")
     set(_obs_cmake_version "3.0.0")
@@ -83,7 +85,7 @@ function(_setup_obs_studio)
       RESULT_VARIABLE _macos_sdk_result
     )
     if(_macos_sdk_result EQUAL 0 AND _macos_sdk_path)
-      string(APPEND _cmake_extra " -DCMAKE_OSX_SYSROOT:STRING=${_macos_sdk_path}")
+      list(APPEND _cmake_extra "-DCMAKE_OSX_SYSROOT:STRING=${_macos_sdk_path}")
     endif()
   endif()
 
