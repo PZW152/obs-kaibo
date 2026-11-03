@@ -11,6 +11,7 @@ published by the Free Software Foundation. See LICENSE.
 
 #include "app/controller.hpp"
 #include "app/i18n.hpp"
+#include "app/obs_frontend_compat.hpp"
 #include "app/worker.hpp"
 #include "ui/dock.hpp"
 
@@ -36,6 +37,7 @@ constexpr const char *kHotkeyEndLive = "kaibo.endlive";
 
 QPointer<kaibo::LiveController> g_controller;
 QPointer<kaibo::ui::KaiboDock> g_dock;
+QPointer<QDockWidget> g_dockWidget;
 obs_hotkey_id g_goLiveHotkey = OBS_INVALID_HOTKEY_ID;
 obs_hotkey_id g_endLiveHotkey = OBS_INVALID_HOTKEY_ID;
 
@@ -123,7 +125,9 @@ bool obs_module_load(void)
 	kaibo::worker::start();
 	g_controller = new kaibo::LiveController(mainWindow);
 	g_dock = new kaibo::ui::KaiboDock(g_controller.data());
-	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"), g_dock.data())) {
+	const kaibo::obsfrontend::DockRegistration dock =
+		kaibo::obsfrontend::registerDock(mainWindow, g_dock.data(), kDockId, obs_module_text("Dock.Title"));
+	if (!dock) {
 		obs_log(LOG_ERROR, "could not add the Kaibo dock");
 		delete g_dock.data();
 		// OBS does not call obs_module_unload() when load fails, so clean up here.
@@ -131,16 +135,21 @@ bool obs_module_load(void)
 		delete g_controller.data();
 		return false;
 	}
+	g_dockWidget = dock.dockWidget;
 
 	if (auto *action = static_cast<QAction *>(obs_frontend_add_tools_menu_qaction(obs_module_text("Menu.Tools")))) {
 		QObject::connect(action, &QAction::triggered, [] {
-			if (!g_dock)
-				return;
-			if (auto *dock = qobject_cast<QDockWidget *>(g_dock->parentWidget())) {
-				dock->show();
-				dock->raise();
-			}
+			if (g_dockWidget)
+				kaibo::obsfrontend::showDock(g_dockWidget.data());
 		});
+	}
+
+	// Second Tools entry: user-initiated fix for OBS 33 layouts where the right
+	// dock column does not reach the top of the window.
+	if (auto *action =
+		    static_cast<QAction *>(obs_frontend_add_tools_menu_qaction(obs_module_text("Menu.FullHeight")))) {
+		QObject::connect(action, &QAction::triggered,
+				 [mainWindow] { kaibo::obsfrontend::showDockFullHeightRight(mainWindow, kDockId); });
 	}
 
 	// data != nullptr marks the go-live hotkey.
