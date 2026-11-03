@@ -13,10 +13,14 @@ namespace kaibo::obs {
 
 // All functions here must be called on the OBS UI thread.
 
-// Replaces OBS's stream service with a custom RTMP server/key and saves it.
-// When `backup` is given and still empty, the current service is copied into it
-// first (unless it already points at Bilibili), so it can be restored later.
-bool applyStreamService(const std::string &server, const std::string &key, ServiceBackup *backup, std::string &error);
+// Copies the current OBS stream service into `backup` when it is a real user service
+// (not a Bilibili ingest one that Kaibo wrote). Returns true when something usable was
+// captured; the caller persists it before OBS is modified.
+bool captureStreamService(ServiceBackup &backup);
+
+// Replaces OBS's stream service with a custom RTMP server/key and saves it. Call
+// captureStreamService() first if the previous service should be restorable.
+bool applyStreamService(const std::string &server, const std::string &key, std::string &error);
 bool restoreStreamService(const ServiceBackup &backup, std::string &error);
 
 bool streamingActive();

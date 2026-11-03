@@ -4,6 +4,7 @@
 #include "app/obs_bridge.hpp"
 #include "app/store.hpp"
 #include "core/bili_client.hpp"
+#include "core/preflight.hpp"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -37,6 +38,13 @@ public:
 	enum class FaceAuth { None, Required, Retrying };
 	enum class ToastKind { Ok, Info, Error };
 
+	// One local go-live check with its message already localized. `blocking` is true for
+	// errors, which goLive() refuses to pass; warnings are advisory and never block.
+	struct PreflightItem {
+		bool blocking = false;
+		QString message;
+	};
+
 	struct State {
 		Auth auth = Auth::Unknown;
 		Busy busy = Busy::None;
@@ -59,6 +67,7 @@ public:
 		bool areasLoading = false;
 
 		bool obsStreaming = false;
+		bool streamStarting = false; // OBS is connecting the output (STREAMING_STARTING)
 		bool streamTargetIsBilibili = false;
 		bool reconnecting = false;
 		bool dropped = false;
@@ -77,6 +86,10 @@ public:
 		Options options;
 		std::vector<int> recentAreas;
 		std::vector<std::string> recentTitles;
+
+		// Recomputed on every changed() from the cached state; the dock can render it
+		// without calling preflight() itself.
+		std::vector<PreflightItem> preflight;
 	};
 
 	explicit LiveController(QObject *parent = nullptr);
@@ -86,11 +99,19 @@ public:
 	Phase phase() const;
 	bool hasUnsyncedChanges() const;
 	bool titleTooLong() const;
+	bool newsTooLong() const;
 	QString describe(const ApiError &error) const;
 	QString storageDirectory() const
 	{
 		return QDir::toNativeSeparators(QString::fromStdString(m_store.directory()));
 	}
+
+	// Go-live checks that need no network: title/announcement length, area choice and
+	// lock state, session, room state, and whether the last request failed. Errors in the
+	// result block goLive(); warnings are advisory. state().preflight carries the same
+	// list, refreshed on every changed().
+	std::vector<PreflightItem> preflight() const;
+	bool preflightBlocked() const;
 
 	// Lifecycle (called from plugin-main on frontend events).
 	void startup();
@@ -129,8 +150,8 @@ public:
 
 	void setOptions(const Options &options);
 
-	static constexpr int kTitleLimit = 40;
-	static constexpr int kNewsLimit = 60;
+	static constexpr int kTitleLimit = kMaxTitleLength;
+	static constexpr int kNewsLimit = kMaxNewsLength;
 
 signals:
 	void changed();
@@ -139,6 +160,19 @@ signals:
 	void toast(const QString &text, int kind, const QString &detail);
 
 private:
+	void emitChanged();
+	void updatePreflight();
+	// Signs the person out when `error` says Bilibili no longer accepts the session.
+	// Returns true when the error was handled (callers must then stop their flow).
+	bool handleSessionExpiry(const ApiError &error);
+	// Puts the OBS service Kaibo replaced back, but only while OBS still holds the
+	// Bilibili service Kaibo wrote; a newer configuration from the person wins.
+	void restorePreviousService();
+	// Keeps the input-mode session in sync when a request rotated cookies, and persists
+	// it when it actually changed (never rewrites the sealed file otherwise).
+	void absorbClientCookies(const CookieJar &jar);
+	// busy → None, then replays a close-room request that arrived while busy.
+	void finishBusyOperation();
 	void validateSession(const CookieJar &jar, bool fromLogin);
 	void applyRoom(const RoomInfo &room);
 	void loadAvatar();
@@ -167,13 +201,16 @@ private:
 	QTimer m_pollTimer;
 	QTimer m_qrTimer;
 	QTimer m_faceAuthTimer;
+	QTimer m_changedTimer; // coalesces bursts of state changes into one UI repaint
 	QElapsedTimer m_qrAge;
 	std::string m_qrKey;
+	int m_qrRequestId = 0; // drops a QR reply that a newer request/stop replaced
 	bool m_qrInFlight = false;
 	bool m_refreshInFlight = false;
 	bool m_ending = false;
 	bool m_pendingRestore = false;
-	bool m_startedStreamForLive = false;
+	bool m_shuttingDown = false;
+	bool m_closeRoomPending = false; // close was asked for while another call was busy
 	int m_faceAuthAttempt = 0;
 	int m_sessionGeneration = 0; // drops stale replies after sign-out
 };

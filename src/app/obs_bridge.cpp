@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "app/obs_bridge.hpp"
 
+#include "core/bili_client.hpp"
+
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -10,39 +12,36 @@ namespace {
 
 bool isBilibiliServer(const char *server)
 {
-	if (!server)
-		return false;
-	const std::string s = server;
-	return s.find("bilivideo.com") != std::string::npos || s.find("acg.tv") != std::string::npos;
+	return server && isBilibiliIngestUrl(server);
 }
 
 } // namespace
 
-// Captures the service Kaibo is about to replace. The backup can be persisted across
-// sessions (crash while live), so it must be refreshed whenever the current service is a
-// real user service again — "a backup exists" does not mean "it is still the right one".
-static void captureService(ServiceBackup &backup, obs_service_t *current)
+// The backup can be persisted across sessions (crash while live), so it must be
+// refreshed whenever the current service is a real user service again — "a backup
+// exists" does not mean "it is still the right one".
+bool captureStreamService(ServiceBackup &backup)
 {
+	obs_service_t *current = obs_frontend_get_streaming_service();
+	if (!current)
+		return false;
 	obs_data_t *settings = obs_service_get_settings(current);
 	const char *type = obs_service_get_type(current);
 	const char *currentServer = obs_data_get_string(settings, "server");
-	if (type && !isBilibiliServer(currentServer)) {
+	const bool captured = type && !isBilibiliServer(currentServer);
+	if (captured) {
 		backup.type = type;
 		backup.settingsJson = obs_data_get_json(settings);
 	}
 	obs_data_release(settings);
+	return captured;
 }
 
-bool applyStreamService(const std::string &server, const std::string &key, ServiceBackup *backup, std::string &error)
+bool applyStreamService(const std::string &server, const std::string &key, std::string &error)
 {
 	if (obs_frontend_streaming_active()) {
 		error = "streaming is active";
 		return false;
-	}
-
-	if (backup) {
-		if (obs_service_t *current = obs_frontend_get_streaming_service())
-			captureService(*backup, current);
 	}
 
 	obs_data_t *settings = obs_data_create();
