@@ -35,6 +35,12 @@ DockRegistration registerDock(QMainWindow *mainWindow, QWidget *content, const c
 // Shows and raises a dock returned by registerDock().
 void showDock(QDockWidget *dock);
 
+// Idempotent safety net for the first start with no saved layout: OBS's own
+// restoreState() can drop a plugin-registered dock from the main window, leaving
+// new users with no visible panel. Only acts when the dock is not managed by any
+// dock area and is not visible, so docks that existing users closed stay closed.
+bool ensureDockManaged(QMainWindow *mainWindow, QDockWidget *dock, const char *dockId);
+
 // User-triggered fix for OBS 33's layout: moves the dock back to the right dock
 // area, shows it, and - if the OBS version has the "full height docks" toggle -
 // enables that toggle so the right column can span the whole window height.

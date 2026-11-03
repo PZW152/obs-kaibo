@@ -212,6 +212,21 @@ void showDock(QDockWidget *dock)
 	dock->raise();
 }
 
+bool ensureDockManaged(QMainWindow *mainWindow, QDockWidget *dock, const char *dockId)
+{
+	if (!mainWindow || !dock)
+		return false;
+	if (dock->isVisible() || mainWindow->dockWidgetArea(dock) != Qt::NoDockWidgetArea)
+		return false;
+
+	mainWindow->addDockWidget(Qt::RightDockWidgetArea, dock);
+	dock->show();
+	dock->raise();
+	obs_log(LOG_INFO, "dock '%s' was missing from the main window layout; added it to the right dock area",
+		dockId ? dockId : "kaibo");
+	return true;
+}
+
 bool showDockFullHeightRight(QMainWindow *mainWindow, const char *dockId)
 {
 	if (!mainWindow || !dockId)
