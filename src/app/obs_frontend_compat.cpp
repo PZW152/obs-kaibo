@@ -212,11 +212,11 @@ void showDock(QDockWidget *dock)
 	dock->raise();
 }
 
-bool ensureDockManaged(QMainWindow *mainWindow, QDockWidget *dock, const char *dockId)
+bool ensureDockManaged(QMainWindow *mainWindow, QDockWidget *dock, const char *dockId, bool firstRun)
 {
 	if (!mainWindow || !dock)
 		return false;
-	if (dock->isVisible() || mainWindow->dockWidgetArea(dock) != Qt::NoDockWidgetArea)
+	if (!firstRun && (dock->isVisible() || mainWindow->dockWidgetArea(dock) != Qt::NoDockWidgetArea))
 		return false;
 
 	mainWindow->addDockWidget(Qt::RightDockWidgetArea, dock);
