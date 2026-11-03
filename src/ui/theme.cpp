@@ -110,6 +110,9 @@ QColor Theme::color(const QString &token) const
 {
 	const auto &values = m_dark ? m_darkValues : m_lightValues;
 	const QColor c = parseColor(values.value(token));
+	// Last-resort palette-free fallback only while the theme files are missing or
+	// unreadable (load() already logged that); never a design colour.
+	// check-theme: allow
 	return c.isValid() ? c : QColor(m_dark ? Qt::white : Qt::black);
 }
 
@@ -147,6 +150,14 @@ QFont Theme::monoFont(int pixelSize) const
 
 QPixmap Theme::pixmap(const QString &name, const QColor &color, int size, qreal dpr) const
 {
+	// Icon rasterisation is the expensive part of menu/paint code paths, so keep
+	// the result per (icon, tint, size, DPR). The cache is tiny and dies with the
+	// dock; a theme switch changes the colour key, so nothing stale survives.
+	const QString key = name + QLatin1Char('|') + color.name(QColor::HexArgb) + QLatin1Char('|') +
+			    QString::number(size) + QLatin1Char('|') + QString::number(qRound64(dpr * 100));
+	if (const auto cached = m_pixmapCache.constFind(key); cached != m_pixmapCache.constEnd())
+		return cached.value();
+
 	QByteArray source = m_iconSources.value(name);
 	if (source.isEmpty()) {
 		QFile file(moduleFile(("icons/" + name + ".svg").toUtf8().constData()));
@@ -166,15 +177,17 @@ QPixmap Theme::pixmap(const QString &name, const QColor &color, int size, qreal 
 	QPainter painter(&pm);
 	painter.setRenderHint(QPainter::Antialiasing);
 	renderer.render(&painter, QRectF(0, 0, size, size));
+	painter.end();
+	m_pixmapCache.insert(key, pm);
 	return pm;
 }
 
-QIcon Theme::icon(const QString &name, const QString &token) const
+QIcon Theme::icon(const QString &name, const QString &token, int size) const
 {
 	QIcon icon;
 	const QColor c = color(token);
 	for (qreal dpr : {1.0, 1.5, 2.0, 3.0}) {
-		const QPixmap pm = pixmap(name, c, 18, dpr);
+		const QPixmap pm = pixmap(name, c, size, dpr);
 		if (!pm.isNull())
 			icon.addPixmap(pm);
 	}

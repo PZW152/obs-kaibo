@@ -1,14 +1,15 @@
 /* Kaibo dock stylesheet. @name@ placeholders are filled from tokens.json for the
    active theme (dark or light) by src/ui/theme.cpp. Mirror of the design system's
-   components/bundle.css — change both together. */
+   components/bundle.css — change both together. Colours, spacings and radii must
+   come from tokens.json; tools/check-theme.py enforces that in CI. */
 
-#KaiboDock, #KaiboDock #KbScroll, #KaiboDock #KbContent, #KaiboDock QStackedWidget > QWidget {
+#KaiboDock, #KaiboDock #KbScroll, #KaiboDock #KbContent {
 	background: @canvas@;
 	color: @ink@;
 }
 #KaiboDock QScrollArea { border: none; background: transparent; }
-#KaiboDock QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }
-#KaiboDock QScrollBar::handle:vertical { background: @line@; border-radius: 3px; min-height: 24px; }
+#KaiboDock QScrollBar:vertical { background: transparent; width: @space-2@; margin: 2px; }
+#KaiboDock QScrollBar::handle:vertical { background: @line@; border-radius: @radius-sm@; min-height: @space-6@; }
 #KaiboDock QScrollBar::handle:vertical:hover { background: @line-strong@; }
 #KaiboDock QScrollBar::add-line, #KaiboDock QScrollBar::sub-line,
 #KaiboDock QScrollBar::add-page, #KaiboDock QScrollBar::sub-page { height: 0; background: none; }
@@ -37,7 +38,7 @@
 /* Buttons */
 #KaiboDock QPushButton, #KaiboDock QToolButton {
 	min-height: @control-md@;
-	padding: 0 12px;
+	padding: 0 @space-3@;
 	border-radius: @radius-md@;
 	border: 1px solid @line-strong@;
 	background: @surface-raised@;
@@ -57,7 +58,9 @@
 #KaiboDock QPushButton[kbVariant="ghost"]:hover { background: @surface-raised@; color: @ink@; }
 #KaiboDock QPushButton[kbVariant="danger"] { background: transparent; border-color: @danger@; color: @danger@; }
 #KaiboDock QPushButton[kbVariant="danger"]:hover { background: @danger-soft@; }
-#KaiboDock QPushButton[kbSize="sm"] { min-height: 26px; padding: 0 8px; font-size: 12px; border-radius: @radius-sm@; }
+#KaiboDock QPushButton[kbSize="sm"] {
+	min-height: @control-sm@; padding: 0 @space-2@; font-size: 12px; border-radius: @radius-sm@;
+}
 #KaiboDock QPushButton[kbVariant="icon"], #KaiboDock QToolButton[kbVariant="icon"] {
 	min-height: @control-sm@; min-width: @control-sm@; max-height: @control-sm@; max-width: @control-sm@;
 	padding: 0; border: none; border-radius: @radius-sm@; background: transparent;
@@ -66,14 +69,23 @@
 #KaiboDock QPushButton[kbVariant="icon"]:focus, #KaiboDock QToolButton[kbVariant="icon"]:focus { border: 2px solid @focus@; }
 #KaiboDock QToolButton[kbVariant="icon"]::menu-indicator { image: none; width: 0; }
 #KaiboDock QPushButton[kbVariant="select"] {
-	text-align: left; padding: 0 10px; font-weight: 400; border-radius: @radius-sm@;
+	text-align: left; padding: 0 @space-2@; font-weight: 400; border-radius: @radius-sm@;
 	background: @surface-raised@; border: 1px solid @line-strong@;
 }
 #KaiboDock QPushButton[kbVariant="chip"] {
-	min-height: 24px; padding: 0 8px; font-size: 12px; font-weight: 400;
+	min-height: @control-sm@; padding: 0 @space-2@; font-size: 12px; font-weight: 400;
 	border-radius: @radius-sm@; border: 1px solid @line@; background: @surface-raised@;
 }
 #KaiboDock QPushButton[kbVariant="chip"][kbOn="true"] { background: @brand-soft@; color: @brand-ink@; border-color: @brand-soft@; font-weight: 600; }
+/* ToggleSwitch paints itself (track, knob, focus ring); keep the generic button
+   chrome from drawing behind it. */
+#KaiboDock QPushButton[kbSwitch="true"] {
+	min-height: 0; min-width: 0; padding: 0; border: none;
+	background: transparent; border-radius: @radius-pill@;
+}
+#KaiboDock QPushButton[kbSwitch="true"]:hover { background: transparent; border: none; }
+#KaiboDock QPushButton[kbSwitch="true"]:focus { border: none; }
+#KaiboDock QPushButton[kbSwitch="true"]:disabled { background: transparent; border: none; }
 
 /* The Go Live button */
 #KaiboDock QPushButton#KbGoLive {
@@ -90,12 +102,12 @@
 
 /* Fields */
 #KaiboDock QLineEdit, #KaiboDock QPlainTextEdit {
-	min-height: @control-md@; padding: 0 8px;
+	min-height: @control-md@; padding: 0 @space-2@;
 	border-radius: @radius-sm@; border: 1px solid @line-strong@;
 	background: @surface-raised@; color: @ink@; font-size: 13px;
 	selection-background-color: @brand-soft@; selection-color: @ink@;
 }
-#KaiboDock QPlainTextEdit { padding: 6px 6px; }
+#KaiboDock QPlainTextEdit { padding: @space-1@; }
 #KaiboDock QLineEdit:focus, #KaiboDock QPlainTextEdit:focus { border: 2px solid @focus@; }
 #KaiboDock QLineEdit[kbError="true"], #KaiboDock QPlainTextEdit[kbError="true"] { border: 1px solid @danger@; }
 #KaiboDock QLineEdit[readOnly="true"] { background: @surface-sunken@; border: 1px solid @line@; font-size: 12px; }
@@ -105,34 +117,34 @@
 #KaiboDock QFrame[kbBanner="error"] { background: @danger-soft@; border-radius: @radius-md@; }
 #KaiboDock QFrame[kbBanner="info"] { background: @surface-raised@; border-radius: @radius-md@; }
 
-/* Toast */
+/* Toast (a normal row under the scrolling content, so it never covers a control) */
 #KaiboDock QFrame#KbToast { background: @surface@; border: 1px solid @line-strong@; border-radius: @radius-md@; }
 
 /* Popups and menus (children of the dock inherit this sheet) */
 QFrame#KbPopup { background: @surface@; border: 1px solid @line-strong@; border-radius: @radius-md@; }
 QFrame#KbPopup QLabel { color: @ink-muted@; font-size: 11px; font-weight: 600; background: transparent; }
 QFrame#KbPopup QLineEdit {
-	min-height: 32px; padding: 0 8px; border-radius: @radius-sm@; border: 2px solid @focus@;
+	min-height: @control-md@; padding: 0 @space-2@; border-radius: @radius-sm@; border: 2px solid @focus@;
 	background: @surface-raised@; color: @ink@; font-size: 13px;
 }
 QFrame#KbPopup QPushButton {
-	min-height: 24px; padding: 0 8px; font-size: 12px; border-radius: @radius-sm@;
+	min-height: @control-sm@; padding: 0 @space-2@; font-size: 12px; border-radius: @radius-sm@;
 	border: 1px solid @line@; background: @surface-raised@; color: @ink@;
 }
 QFrame#KbPopup QPushButton[kbOn="true"] { background: @brand-soft@; color: @brand-ink@; border-color: @brand-soft@; font-weight: 600; }
 QFrame#KbPopup QListWidget { background: transparent; border: none; color: @ink@; font-size: 13px; outline: none; }
-QFrame#KbPopup QListWidget::item { min-height: 28px; padding: 0 8px; border-radius: @radius-sm@; }
+QFrame#KbPopup QListWidget::item { min-height: @control-sm@; padding: 0 @space-2@; border-radius: @radius-sm@; }
 QFrame#KbPopup QListWidget::item:hover { background: @surface-raised@; }
 QFrame#KbPopup QListWidget::item:selected { background: @brand-soft@; color: @brand-ink@; }
-QFrame#KbPopup QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }
-QFrame#KbPopup QScrollBar::handle:vertical { background: @line-strong@; border-radius: 3px; min-height: 24px; }
+QFrame#KbPopup QScrollBar:vertical { background: transparent; width: @space-2@; margin: 2px; }
+QFrame#KbPopup QScrollBar::handle:vertical { background: @line-strong@; border-radius: @radius-sm@; min-height: @space-6@; }
 QFrame#KbPopup QScrollBar::add-line, QFrame#KbPopup QScrollBar::sub-line { height: 0; }
 
-#KaiboDock QMenu, QMenu#KbMenu {
-	background: @surface@; border: 1px solid @line-strong@; border-radius: @radius-sm@; padding: 4px; color: @ink@;
+#KaiboDock QMenu {
+	background: @surface@; border: 1px solid @line-strong@; border-radius: @radius-sm@; padding: @space-1@; color: @ink@;
 }
-#KaiboDock QMenu::item, QMenu#KbMenu::item { padding: 6px 12px; border-radius: 4px; }
-#KaiboDock QMenu::item:selected, QMenu#KbMenu::item:selected { background: @surface-raised@; }
-#KaiboDock QMenu::separator, QMenu#KbMenu::separator { height: 1px; background: @line@; margin: 4px 2px; }
+#KaiboDock QMenu::item { padding: @space-1@ @space-3@; border-radius: @radius-sm@; }
+#KaiboDock QMenu::item:selected { background: @surface-raised@; }
+#KaiboDock QMenu::separator { height: 1px; background: @line@; margin: @space-1@ 0; }
 
-#KaiboDock QToolTip { background: @surface@; color: @ink@; border: 1px solid @line-strong@; padding: 4px 6px; }
+#KaiboDock QToolTip { background: @surface@; color: @ink@; border: 1px solid @line-strong@; padding: @space-1@ @space-2@; }

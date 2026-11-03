@@ -7,9 +7,10 @@
 
 #include <vector>
 
+class QLabel;
 class QLineEdit;
 class QListWidget;
-class QLabel;
+class QPushButton;
 class QWidget;
 
 namespace kaibo::ui {
@@ -26,10 +27,17 @@ public:
 	// Refreshes the lists while open (e.g. the area list finished loading).
 	void updateData(const std::vector<AreaGroup> &groups, const std::vector<int> &recent, int current,
 			bool loading);
+	// True when updateData() would actually change what is shown (the dock calls
+	// this from render(), which can fire on every keystroke).
+	bool needsUpdate(const std::vector<AreaGroup> &groups, const std::vector<int> &recent, int current,
+			 bool loading) const;
 	bool isLoading() const { return m_loading; }
+	// Re-applies the theme stylesheet while the popup is open (OBS theme switch).
+	void refreshTheme();
 
 signals:
 	void picked(int areaId);
+	void retryRequested();
 
 protected:
 	bool eventFilter(QObject *watched, QEvent *event) override;
@@ -45,6 +53,7 @@ private:
 	FlowLayout *m_recentFlow;
 	QListWidget *m_list;
 	QLabel *m_empty;
+	QPushButton *m_retry;
 	std::vector<AreaGroup> m_groups;
 	std::vector<int> m_recent;
 	int m_current = 0;
