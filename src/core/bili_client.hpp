@@ -70,6 +70,11 @@ constexpr int FaceAuthRequired = 60024;
 constexpr int FaceAuthRequiredAlt = 60043;
 } // namespace codes
 
+// True when an OBS stream-service `server` points at one of Bilibili's ingest servers
+// (*.bilivideo.com, *.acgvideo.com, legacy *.acg.tv). Used to tell the Bilibili service
+// Kaibo wrote apart from the person's own service, so their settings can be restored.
+bool isBilibiliIngestUrl(const std::string &server);
+
 // Synchronous Bilibili web/live API client. Not thread-safe: run every call on the
 // one worker thread. Holds the session cookies and updates them from Set-Cookie.
 class BiliClient {
