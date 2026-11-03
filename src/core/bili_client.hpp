@@ -6,6 +6,7 @@
 #include "core/http.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -70,11 +71,20 @@ constexpr int FaceAuthRequired = 60024;
 constexpr int FaceAuthRequiredAlt = 60043;
 } // namespace codes
 
+// True when an OBS stream-service `server` points at one of Bilibili's ingest servers
+// (*.bilivideo.com, *.acgvideo.com, legacy *.acg.tv). Used to tell the Bilibili service
+// Kaibo wrote apart from the person's own service, so their settings can be restored.
+bool isBilibiliIngestUrl(const std::string &server);
+
 // Synchronous Bilibili web/live API client. Not thread-safe: run every call on the
 // one worker thread. Holds the session cookies and updates them from Set-Cookie.
 class BiliClient {
 public:
-	explicit BiliClient(HttpTransport &transport) : m_http(transport) {}
+	// The client keeps the transport alive for as long as it (or a job that captured it)
+	// exists: a background request must not outlive its transport during OBS exit.
+	explicit BiliClient(std::shared_ptr<HttpTransport> transport) : m_http(std::move(transport)) {}
+	// Non-owning convenience for stack transports (tests).
+	explicit BiliClient(HttpTransport &transport) : m_http(&transport, [](HttpTransport *) {}) {}
 
 	void setCookies(CookieJar jar) { m_cookies = std::move(jar); }
 	// Per-request timeout; shortened when OBS is exiting.
@@ -121,7 +131,7 @@ private:
 	std::vector<std::string> headers(bool withCookies, bool form, bool appIdentity) const;
 	void absorbCookies(const HttpResponse &response);
 
-	HttpTransport &m_http;
+	std::shared_ptr<HttpTransport> m_http;
 	CookieJar m_cookies;
 	long m_timeoutMs = 10000;
 };

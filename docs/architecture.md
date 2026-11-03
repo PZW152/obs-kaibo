@@ -6,6 +6,7 @@ src/
 │   ├── bili_client   B 站接口：登录、直播间、分区、开播/关播、公告、退出（通过 HttpTransport 注入网络层）
 │   ├── cookies       会话 Cookie 解析与合并
 │   ├── areas         分区列表解析、搜索、最近使用
+│   ├── preflight     开播前检查（登录/直播间/分区/标题/公告/离线），产出可本地化的阻塞项与警告
 │   ├── settings_model settings.json 的读写与默认值；原子写入
 │   ├── text / md5    URL 编码、计数格式化（1.2万 / 1.2萬 / 12K）、签名用 MD5
 │   └── http.hpp      网络抽象
@@ -13,6 +14,7 @@ src/
 │   ├── controller    LiveController：唯一的状态来源，所有业务流程（UI 线程）
 │   ├── worker        单个后台线程跑所有网络请求，结果以事件投递回 UI 线程
 │   ├── obs_bridge    改写/恢复 OBS 推流设置、开始/停止推流、监听推流断开与重连
+│   ├── obs_frontend_compat  运行时解析不同 OBS 版本的 dock 注册 API（28/29 用 add_dock，30+ 用 add_custom_qdock / add_dock_by_id），并提供「放到右侧全高」动作
 │   ├── store         数据文件的唯一出入口（settings.json、credentials.bin、旧插件导入）
 │   ├── secret_store  凭证加密（Windows DPAPI）
 │   └── curl_transport libcurl 实现，强制 HTTPS、不跟随重定向
@@ -33,6 +35,9 @@ src/
 - **设计系统即数据**：`data/theme/tokens.json` 与在线设计系统共用；`kaibo.qss` 用 `@token@` 占位，运行时按深色/浅色替换。改颜色只改一处。
 - **数据所有权**：Kaibo 只写 `plugin_config/obs-kaibo/` 下列出的文件，删除时按清单删除，不扫描、不猜测。
 - **人脸认证是状态而不是弹窗**：B 站要求人脸认证（60024/60043）时进入 `FaceAuth` 状态，由主页面内的卡片驱动；扫码完成后自动按退避重试开播，避免重复扫码和嵌套弹窗。
+- **开播前检查**：`core/preflight` 在开播前检查登录、直播间、分区（含「需申请」状态）、标题/公告长度和离线状态；阻塞项会阻止开播并给出本地化原因，警告只提示。检查结果缓存在 `LiveController::State`，UI 直接渲染。
+- **跨版本 OBS 兼容**：构建基线取最旧的受支持版本，dock 注册 API 全部运行时解析（`obs_frontend_compat`），所以同一份产物可以载入 OBS 29.1–33.x。
+- **界面渲染是幂等的**：`changed()` 每个事件循环只合并触发一次渲染；图标/二维码/头像/主题位图都做缓存；面板隐藏时不跑计时器与渲染。
 - **向后兼容**：`settings.json` 带 `schema` 字段；读取时忽略未知字段、缺失字段取默认值，损坏时回退到 `.bak`。
 
 ## 线程模型

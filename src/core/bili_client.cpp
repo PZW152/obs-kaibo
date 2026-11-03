@@ -5,7 +5,9 @@
 #include "core/text.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstring>
 #include <ctime>
 
 namespace kaibo {
@@ -61,6 +63,13 @@ ApiError parseEnvelope(const HttpResponse &response, json11::Json &json)
 	if (!response.transportOk())
 		return networkError(response);
 
+	// A code is a number or a numeric string in Bilibili envelopes. Anything else
+	// (missing, null, bool) is not an envelope we understand and must never be read as
+	// success: doing so could sign the person out or report a room as closed.
+	auto envelopeCode = [](const json11::Json &value, int64_t &out) {
+		return !value.is_bool() && jsonInt(value, out);
+	};
+
 	std::string err;
 	json = json11::Json::parse(response.body, err);
 	const bool parsed = err.empty() && json.is_object();
@@ -69,7 +78,7 @@ ApiError parseEnvelope(const HttpResponse &response, json11::Json &json)
 		// Bilibili's own code/message instead of a bare "HTTP 412".
 		if (parsed) {
 			int64_t code = 0;
-			if (jsonInt(json["code"], code) && code != 0) {
+			if (envelopeCode(json["code"], code) && code != 0) {
 				std::string message = json["message"].string_value();
 				if (message.empty())
 					message = json["msg"].string_value();
@@ -84,7 +93,7 @@ ApiError parseEnvelope(const HttpResponse &response, json11::Json &json)
 	// The envelope must actually carry a code: a JSON object without one (error page,
 	// proxy/WAF answer) used to be mistaken for success and could sign the person out.
 	int64_t code = 0;
-	if (!jsonInt(json["code"], code))
+	if (!envelopeCode(json["code"], code))
 		return {ErrorKind::Parse, 0, "missing code"};
 	if (code == 0)
 		return ApiError::none();
@@ -117,6 +126,54 @@ int daysInMonth(int year, int month)
 }
 
 } // namespace
+
+namespace {
+
+// True when `host` is exactly `domain` or a subdomain of it (dot boundary). A substring
+// match would accept hosts like "live-push.bilivideo.com.evil.test", and this decision
+// guards whether OBS's stream settings are Kaibo's or the person's own.
+bool hostMatchesDomain(const std::string &host, const char *domain)
+{
+	const size_t length = std::strlen(domain);
+	if (host.size() == length)
+		return host.compare(0, length, domain) == 0;
+	return host.size() > length && host[host.size() - length - 1] == '.' &&
+	       host.compare(host.size() - length, length, domain) == 0;
+}
+
+} // namespace
+
+bool isBilibiliIngestUrl(const std::string &server)
+{
+	// Bilibili's RTMP ingests: live-push.bilivideo.com, txy.live-play.acgvideo.com,
+	// js.live-play.acgvideo.com and the older *.acg.tv hosts. Any of these means the
+	// current OBS service is one Kaibo (or a previous Kaibo session) wrote.
+	const size_t schemeEnd = server.find("://");
+	if (schemeEnd == std::string::npos)
+		return false;
+	std::string scheme = server.substr(0, schemeEnd);
+	for (char &c : scheme)
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	if (scheme != "rtmp" && scheme != "rtmps")
+		return false; // Bilibili ingest is RTMP; other schemes are never Kaibo's service
+	size_t begin = schemeEnd + 3;
+	size_t end = server.find_first_of("/?#", begin);
+	std::string authority = server.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+	const size_t at = authority.rfind('@'); // strip user info
+	if (at != std::string::npos)
+		authority.erase(0, at + 1);
+	if (authority.empty() || authority.front() == '[') // IPv6 literals are never Bilibili
+		return false;
+	const size_t colon = authority.find(':'); // strip the port
+	if (colon != std::string::npos)
+		authority.resize(colon);
+	while (!authority.empty() && authority.back() == '.')
+		authority.pop_back();
+	for (char &c : authority)
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	return hostMatchesDomain(authority, "bilivideo.com") || hostMatchesDomain(authority, "acgvideo.com") ||
+	       hostMatchesDomain(authority, "acg.tv");
+}
 
 std::vector<std::string> BiliClient::headers(bool withCookies, bool form, bool appIdentity) const
 {
@@ -152,7 +209,7 @@ HttpResponse BiliClient::get(const std::string &url, bool withCookies, bool appI
 	request.url = url;
 	request.headers = headers(withCookies, false, appIdentity);
 	request.timeoutMs = m_timeoutMs;
-	const HttpResponse response = m_http.send(request);
+	const HttpResponse response = m_http->send(request);
 	absorbCookies(response);
 	return response;
 }
@@ -165,7 +222,7 @@ HttpResponse BiliClient::post(const std::string &url, const std::string &form, b
 	request.body = form;
 	request.headers = headers(true, true, appIdentity);
 	request.timeoutMs = m_timeoutMs;
-	const HttpResponse response = m_http.send(request);
+	const HttpResponse response = m_http->send(request);
 	absorbCookies(response);
 	return response;
 }
@@ -244,6 +301,14 @@ ApiError BiliClient::pollQr(const std::string &key, QrState &state)
 	}
 
 	CookieJar jar;
+	// The login flow may already have handed out the device identity (buvid3/buvid4/
+	// b_nut); carry it into the confirmed session instead of dropping it, otherwise the
+	// live APIs see a new device right after sign-in.
+	for (const char *name : {"buvid3", "buvid4", "b_nut"}) {
+		const std::string value = m_cookies.get(name);
+		if (!value.empty())
+			jar.set(name, value);
+	}
 	jar.apply(response.setCookies);
 	const std::string successUrl = json["data"]["url"].string_value();
 	if (!jar.hasSession() && !successUrl.empty()) {
@@ -276,13 +341,25 @@ ApiError BiliClient::fetchProfile(Profile &profile)
 	if (error)
 		return error;
 	const auto &data = json["data"];
-	if (!data["isLogin"].bool_value())
+	if (!data.is_object())
+		return {ErrorKind::Parse, 0, "missing profile data"};
+	// Never read a missing/odd isLogin as "logged out": that would delete a valid
+	// stored session on a malformed response.
+	int64_t login = 0;
+	if (!jsonInt(data["isLogin"], login))
+		return {ErrorKind::Parse, 0, "missing isLogin"};
+	if (login == 0)
 		return {ErrorKind::NotLoggedIn, codes::NotLoggedIn, {}};
 	profile.mid = jsonIntOr(data["mid"]);
 	profile.name = data["uname"].string_value();
 	profile.face = data["face"].string_value();
 	if (profile.mid <= 0)
 		return {ErrorKind::Parse, 0, "missing mid"};
+	// A jar without DedeUserID still carries a valid session, but the face-auth URL and
+	// some endpoints need the uid. The profile just told us what it is: keep the jar
+	// self-contained (it is what gets persisted) without changing the sign-in rule.
+	if (m_cookies.uid().empty())
+		m_cookies.set("DedeUserID", std::to_string(profile.mid));
 	return ApiError::none();
 }
 
@@ -305,13 +382,20 @@ ApiError BiliClient::fetchRoomInfo(int64_t roomId, RoomInfo &info)
 	if (error)
 		return error;
 	const auto &data = json["data"];
+	if (!data.is_object())
+		return {ErrorKind::Parse, 0, "missing room data"};
+	int64_t liveStatus = 0;
+	// A room answer without live_status cannot be read as "offline": the caller would
+	// treat a live room as closed and clear its state.
+	if (!jsonInt(data["live_status"], liveStatus))
+		return {ErrorKind::Parse, 0, "missing live_status"};
 	info.roomId = jsonIntOr(data["room_id"], roomId);
 	info.title = data["title"].string_value();
 	info.areaId = static_cast<int>(jsonIntOr(data["area_id"]));
 	info.parentAreaId = static_cast<int>(jsonIntOr(data["parent_area_id"]));
 	info.areaName = data["area_name"].string_value();
 	info.parentAreaName = data["parent_area_name"].string_value();
-	info.live = jsonIntOr(data["live_status"]) == 1;
+	info.live = liveStatus == 1;
 	info.online = jsonIntOr(data["online"]);
 	info.followers = jsonIntOr(data["attention"]);
 	info.liveStartedAt = info.live ? parseBeijingTime(data["live_time"].string_value()) : 0;
@@ -325,14 +409,19 @@ ApiError BiliClient::fetchRoomNews(int64_t roomId, std::string &content)
 		get("https://api.live.bilibili.com/room_ex/v1/RoomNews/get?roomid=" + std::to_string(roomId)), json);
 	if (error)
 		return error;
-	content = json["data"]["content"].string_value();
+	const auto &data = json["data"];
+	if (!data.is_object())
+		return {ErrorKind::Parse, 0, "missing news data"};
+	content = data["content"].string_value();
 	return ApiError::none();
 }
 
 ApiError BiliClient::fetchAreas(std::vector<AreaGroup> &groups)
 {
 	json11::Json json;
-	auto error = parseEnvelope(get("https://api.live.bilibili.com/room/v1/Area/getList", false), json);
+	// Send the session: lock_status (whether an area needs Bilibili's approval) is
+	// account-specific, and the go-live preflight depends on it being accurate.
+	auto error = parseEnvelope(get("https://api.live.bilibili.com/room/v1/Area/getList", true), json);
 	if (error)
 		return error;
 	groups = parseAreaList(json["data"]);
@@ -345,6 +434,8 @@ ApiError BiliClient::updateRoom(int64_t roomId, const std::optional<std::string>
 {
 	if (!title && !areaId)
 		return ApiError::none();
+	if (m_cookies.csrf().empty())
+		return {ErrorKind::NotLoggedIn, codes::NotLoggedIn, {}};
 	std::vector<std::pair<std::string, std::string>> fields = {{"room_id", std::to_string(roomId)},
 								   {"platform", "pc_link"}};
 	if (title)
@@ -360,6 +451,8 @@ ApiError BiliClient::updateRoom(int64_t roomId, const std::optional<std::string>
 
 ApiError BiliClient::updateNews(int64_t roomId, int64_t mid, const std::string &content)
 {
+	if (m_cookies.csrf().empty())
+		return {ErrorKind::NotLoggedIn, codes::NotLoggedIn, {}};
 	const std::string form = formEncode({{"room_id", std::to_string(roomId)},
 					     {"uid", std::to_string(mid)},
 					     {"content", content},
@@ -417,6 +510,8 @@ ApiError BiliClient::startLive(int64_t roomId, int areaId, LiveStart &result)
 
 ApiError BiliClient::stopLive(int64_t roomId)
 {
+	if (roomId <= 0 || m_cookies.csrf().empty())
+		return {ErrorKind::NotLoggedIn, codes::NotLoggedIn, {}};
 	const std::string form = formEncode({{"room_id", std::to_string(roomId)},
 					     {"platform", "pc_link"},
 					     {"csrf_token", m_cookies.csrf()},
@@ -434,19 +529,28 @@ ApiError BiliClient::logout()
 	request.url = "https://passport.bilibili.com/login/exit/v2";
 	request.body = formEncode({{"biliCSRF", m_cookies.csrf()}});
 	request.headers = headers(true, true, false);
+	request.timeoutMs = m_timeoutMs;
 	json11::Json json;
-	return parseEnvelope(m_http.send(request), json);
+	return parseEnvelope(m_http->send(request), json);
 }
 
 ApiError BiliClient::fetchBytes(const std::string &url, std::string &bytes)
 {
-	if (url.rfind("https://", 0) != 0)
+	// Image URLs arrive as https://, but older profile data and some hosts still hand
+	// out protocol-relative (//i0.hdslb.com/...) or plain http:// URLs. Never fetch over
+	// http: upgrade it, then apply the same https-only rule.
+	std::string target = url;
+	if (target.rfind("//", 0) == 0)
+		target = "https:" + target;
+	else if (target.rfind("http://", 0) == 0)
+		target = "https://" + target.substr(7);
+	if (target.rfind("https://", 0) != 0)
 		return {ErrorKind::Parse, 0, "refusing non-https url"};
 	HttpRequest request;
-	request.url = url;
+	request.url = target;
 	request.headers = {kUserAgent, "Referer: https://www.bilibili.com/"};
-	request.timeoutMs = 8000;
-	const auto response = m_http.send(request);
+	request.timeoutMs = (std::min)(8000L, m_timeoutMs);
+	const auto response = m_http->send(request);
 	if (!response.transportOk())
 		return networkError(response);
 	if (response.status < 200 || response.status >= 300)

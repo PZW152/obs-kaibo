@@ -6,7 +6,7 @@
   <a href="https://github.com/PZW152/obs-kaibo/actions/workflows/tests.yaml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/PZW152/obs-kaibo/tests.yaml?branch=main&label=tests"></a>
   <a href="https://github.com/PZW152/obs-kaibo/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/PZW152/obs-kaibo/total?color=111214"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/PZW152/obs-kaibo?color=111214"></a>
-  <img alt="OBS 30+" src="https://img.shields.io/badge/OBS-30%2B-111214">
+  <img alt="OBS 29.1+" src="https://img.shields.io/badge/OBS-29.1%2B-111214">
 </p>
 
 <p align="center"><b>在 OBS 里一键开播哔哩哔哩。</b><br>扫码登录 · 改标题和分区 · 自动写入推流设置 · 断流提醒 · 简体 / 繁體 / English</p>
@@ -37,12 +37,14 @@ Kaibo 是 OBS Studio 的一个停靠面板（Dock）。登录一次之后，开�
 | --- | --- |
 | 扫码登录 | 面板内直接显示二维码，显示「已扫码 / 已过期」状态，过期一键刷新 |
 | 直播间信息 | 标题（40 字计数）、最近用过的标题、分区搜索与「最近使用」、直播间公告 |
-| 一键开播 / 关播 | 未同步的修改在开播时自动同步；可选开播后自动推流 |
-| 状态对账 | 区分「直播中」「直播间开着但 OBS 没推流」「推流断了」「OBS 在推流但没开播」，每种情况给出唯一的修复按钮 |
+| 开播前检查 | 开播前检查登录、直播间、分区（含「需申请」）、标题/公告长度与离线状态；能提前说清的问题先说明，不让开播失败得莫名其妙 |
+| 一键开播 / 关播 | 未同步的修改在开播时自动同步；可选开播后自动推流；结束直播会等 OBS 推流真正停止再关房间 |
+| 状态对账 | 区分「直播中」「直播间开着但 OBS 没推流」「推流断了」「OBS 在推流但没开播」，每种情况给出唯一的修复按钮；只处理真正指向 B 站的推流，不会误伤其他平台 |
 | 断流与重连 | 网络断线不会关闭直播间，一键重新推流；OBS 重连中会显示 |
-| 关闭 OBS 时 | 可选自动关闭直播间，避免「挂空播」 |
-| 多平台直播 | 可选关播后恢复你原来的 OBS 推流设置 |
+| 关闭 OBS 时 | 可选自动关闭直播间，避免「挂空播」；退出 OBS 时也能可靠关闭 |
+| 多平台直播 | 可选关播后恢复你原来的 OBS 推流设置（只在目标仍是 B 站时恢复） |
 | 人脸认证 | B 站要求开播前完成人脸认证时，面板里直接显示认证二维码；扫码完成后 Kaibo 会自动等待并重试，不需要反复扫码 |
+| 右侧全高面板 | 面板放右侧、占满整列：OBS 33 起支持「全高度停靠窗口」，Kaibo 还提供 **工具 → 将面板放到右侧全高** 一键归位 |
 | 快捷键 | 「Kaibo：一键开播」「Kaibo：结束直播」可在 OBS 快捷键设置里绑定 |
 | 主题 | 跟随 OBS 深色 / 浅色主题；所有文字对比度符合 WCAG AA |
 | 语言 | 简体中文、繁體中文、English，跟随 OBS 语言 |
@@ -51,13 +53,13 @@ Kaibo 是 OBS Studio 的一个停靠面板（Dock）。登录一次之后，开�
 
 ## 安装
 
-需要 **OBS Studio 30 或更高版本**。
+支持 **OBS Studio 29.1 及以上**（Windows；已在 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.x 上实测载入）。macOS 版本对 OBS 版本要求更高（31.1+），Linux / Flatpak 与发行版或 runtime 的 OBS 匹配，详见 [docs/install.md](docs/install.md)。
 
 ### Windows（推荐安装程序）
 
 1. 从 [Releases](https://github.com/PZW152/obs-kaibo/releases/latest) 下载 `obs-kaibo-<版本>-windows-x64-installer.exe`。
 2. 关闭 OBS，运行安装程序。插件会安装到 `C:\ProgramData\obs-studio\plugins\obs-kaibo`（OBS 官方插件目录，Steam 版 OBS 也适用）。
-3. 打开 OBS，在 **停靠窗口（Docks）→ Kaibo 开播** 或 **工具 → Kaibo 开播** 打开面板。
+3. 打开 OBS，Kaibo 面板会自动显示；也可以从 **工具 → Kaibo 开播** 打开。全新安装的 OBS 首次启动时面板可能以浮动窗口出现，点 **工具 → 将面板放到右侧全高** 即可归位。想让它占满右侧整列，见 [常见问题](docs/troubleshooting.md#想把面板放到最右侧占满整栏)。
 
 升级时直接运行新版本安装程序即可，设置和登录都会保留。
 

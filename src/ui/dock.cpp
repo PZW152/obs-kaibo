@@ -17,16 +17,22 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
+#include <QDir>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMainWindow>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScreen>
+#include <QSettings>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QShortcut>
 #include <QUrl>
+#include <QVariant>
 #include <QVBoxLayout>
 
 namespace kaibo::ui {
@@ -89,6 +95,21 @@ QString roomLink(int64_t roomId)
 	return QStringLiteral("https://live.bilibili.com/%1").arg(roomId);
 }
 
+// The controller sends LiveController::ToastKind as an int over the signal; map
+// it to the typed UI enum so no magic 0/1/2 ever reaches the toast.
+ToastKind toToastKind(int kind)
+{
+	switch (static_cast<LiveController::ToastKind>(kind)) {
+	case LiveController::ToastKind::Ok:
+		return ToastKind::Ok;
+	case LiveController::ToastKind::Error:
+		return ToastKind::Error;
+	case LiveController::ToastKind::Info:
+		break;
+	}
+	return ToastKind::Info;
+}
+
 } // namespace
 
 KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(parent), m_controller(controller)
@@ -115,6 +136,17 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 	auto *col = new QVBoxLayout(content);
 	col->setContentsMargins(12, 4, 12, 12);
 	col->setSpacing(0);
+	// Optional OBS 33 layout hint, above every page; shown by updateLayoutHint().
+	m_hintWrap = new QWidget(content);
+	auto *hintLayout = new QVBoxLayout(m_hintWrap);
+	const int hintMargin = theme().length(QStringLiteral("space-3"), 12);
+	hintLayout->setContentsMargins(0, 0, 0, hintMargin);
+	hintLayout->setSpacing(0);
+	m_hintBanner = new Banner(m_hintWrap);
+	connect(m_hintBanner, &Banner::secondaryClicked, this, &KaiboDock::dismissLayoutHint);
+	hintLayout->addWidget(m_hintBanner);
+	m_hintWrap->hide();
+	col->addWidget(m_hintWrap);
 	// Pages share one column and only the current one is visible. A QStackedWidget would size the
 	// scroll content to its tallest page (its heightForWidth spans hidden pages too).
 	m_loadingPage = buildLoadingPage();
@@ -131,19 +163,58 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 
 	m_picker = new AreaPicker(this);
 	connect(m_picker, &AreaPicker::picked, m_controller, &LiveController::setAreaDraft);
-	m_toast = new Toast(this);
+	connect(m_picker, &AreaPicker::retryRequested, m_controller, &LiveController::ensureAreas);
+
+	// The toast is a normal row under the scroll area: it takes layout space
+	// instead of painting over the Go Live button, and cannot swallow its clicks.
+	m_toastWrap = new QWidget(this);
+	auto *toastLayout = new QVBoxLayout(m_toastWrap);
+	const int toastMargin = theme().length(QStringLiteral("space-3"), 12);
+	toastLayout->setContentsMargins(toastMargin, 0, toastMargin, toastMargin);
+	m_toast = new Toast(m_toastWrap);
+	toastLayout->addWidget(m_toast);
+	m_toastWrap->hide();
+	root->addWidget(m_toastWrap);
+	connect(m_toast, &Toast::visibilityChanged, this, [this] {
+		if (m_toast->isVisible())
+			m_toastWrap->show();
+		else
+			m_toastWrap->hide();
+	});
 
 	m_clockTimer.setInterval(1000);
 	connect(&m_clockTimer, &QTimer::timeout, this, &KaiboDock::renderClock);
 
-	connect(m_controller, &LiveController::changed, this, &KaiboDock::render);
+	// changed() fires on every keystroke in the title/announcement editors; collapse
+	// bursts into one render pass on the next event-loop turn.
+	m_renderTimer.setSingleShot(true);
+	m_renderTimer.setInterval(0);
+	connect(&m_renderTimer, &QTimer::timeout, this, &KaiboDock::render);
+	connect(m_controller, &LiveController::changed, this, [this] { scheduleRender(); });
 	connect(m_controller, &LiveController::qrChanged, this, &KaiboDock::renderQr);
-	connect(m_controller, &LiveController::avatarChanged, this,
-		[this] { m_avatar->setImage(m_controller->state().avatar); });
 	connect(m_controller, &LiveController::toast, this,
 		[this](const QString &text, int kind, const QString &detail) {
-			m_toast->showMessage(kind, text, detail);
+			m_toastWrap->show();
+			m_toast->showMessage(toToastKind(kind), text, detail);
 		});
+
+	// Everything reachable with the mouse is reachable from the keyboard: Ctrl+Enter
+	// goes live from anywhere in the dock, Esc leaves the settings page.
+	auto *goLiveShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return), this);
+	goLiveShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+	connect(goLiveShortcut, &QShortcut::activated, this, &KaiboDock::requestGoLive);
+	auto *escapeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+	escapeShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+	connect(escapeShortcut, &QShortcut::activated, this, [this] {
+		if (m_settingsOpen)
+			setSettingsOpen(false);
+	});
+
+	// Re-elide labels after a resize settles; the single-shot timer coalesces the
+	// bursts produced while the dock separator is dragged.
+	m_elideTimer.setSingleShot(true);
+	m_elideTimer.setInterval(0);
+	connect(&m_elideTimer, &QTimer::timeout, this, &KaiboDock::updateElidedTexts);
 
 	applyTheme();
 	render();
@@ -199,6 +270,10 @@ QWidget *KaiboDock::buildLoginPage()
 	col->setContentsMargins(0, 0, 0, 0);
 	col->setSpacing(12);
 
+	m_loginBanner = new Banner(page);
+	connect(m_loginBanner, &Banner::primaryClicked, m_controller, &LiveController::refresh);
+	col->addWidget(m_loginBanner);
+
 	m_legacyBanner = new Banner(page);
 	connect(m_legacyBanner, &Banner::primaryClicked, m_controller, &LiveController::importLegacy);
 	connect(m_legacyBanner, &Banner::secondaryClicked, m_controller, &LiveController::dismissLegacy);
@@ -249,11 +324,12 @@ QWidget *KaiboDock::buildMainPage()
 	auto *names = new QVBoxLayout();
 	names->setSpacing(0);
 	m_name = label({}, "title", account);
-	m_name->setTextInteractionFlags(Qt::TextSelectableByMouse);
-	m_name->setMinimumWidth(1); // a long name is clipped instead of pushing the buttons out of the card
+	// Long names/labels elide (ElideRight) with the full value in the tooltip and
+	// accessible name instead of forcing the card wider than the dock.
+	m_name->setMinimumSize(1, 1);
 	m_roomLabel = label({}, "caption", account);
 	m_roomLabel->setWordWrap(false);
-	m_roomLabel->setMinimumWidth(1);
+	m_roomLabel->setMinimumSize(1, 1);
 	names->addWidget(m_name);
 	names->addWidget(m_roomLabel);
 	who->addLayout(names, 1);
@@ -264,9 +340,9 @@ QWidget *KaiboDock::buildMainPage()
 			QUrl(s.roomId > 0 ? roomLink(s.roomId) : QString::fromLatin1(kLiveCenterUrl)));
 	});
 	who->addWidget(openRoom, 0, Qt::AlignTop);
-	auto *more = iconButton(QStringLiteral("more"), T("Common.More"), account);
-	connect(more, &QPushButton::clicked, this, &KaiboDock::showAccountMenu);
-	who->addWidget(more, 0, Qt::AlignTop);
+	m_moreButton = iconButton(QStringLiteral("more"), T("Common.More"), account);
+	connect(m_moreButton, &QPushButton::clicked, this, &KaiboDock::showAccountMenu);
+	who->addWidget(m_moreButton, 0, Qt::AlignTop);
 	ac->addLayout(who);
 	m_stats = new QWidget(account);
 	auto *stats = new QHBoxLayout(m_stats);
@@ -298,11 +374,12 @@ QWidget *KaiboDock::buildMainPage()
 	connect(m_title, &QLineEdit::textEdited, m_controller, &LiveController::setTitleDraft);
 	connect(m_title, &QLineEdit::returnPressed, m_controller, &LiveController::syncRoom);
 	titleRow->addWidget(m_title, 1);
-	auto *history = iconButton(QStringLiteral("history"), T("Room.TitleHistory"), room);
-	connect(history, &QPushButton::clicked, this, &KaiboDock::showTitleHistory);
-	titleRow->addWidget(history);
+	m_titleHistoryButton = iconButton(QStringLiteral("history"), T("Room.TitleHistory"), room);
+	connect(m_titleHistoryButton, &QPushButton::clicked, this, &KaiboDock::showTitleHistory);
+	titleRow->addWidget(m_titleHistoryButton);
 	rc->addLayout(titleRow);
 	m_titleError = label({}, "danger", room);
+	m_titleError->setWordWrap(true);
 	rc->addWidget(m_titleError);
 
 	rc->addSpacing(6);
@@ -310,8 +387,10 @@ QWidget *KaiboDock::buildMainPage()
 	m_areaButton = button({}, "select", room);
 	m_areaButton->setAccessibleName(T("Room.Area"));
 	auto *areaInner = new QHBoxLayout(m_areaButton);
-	areaInner->setContentsMargins(10, 0, 8, 0);
+	const int areaInset = theme().length(QStringLiteral("space-2"), 8);
+	areaInner->setContentsMargins(areaInset, 0, areaInset, 0);
 	m_areaText = new QLabel(m_areaButton);
+	m_areaText->setMinimumSize(1, 1);
 	m_areaText->setAttribute(Qt::WA_TransparentForMouseEvents);
 	areaInner->addWidget(m_areaText, 1);
 	auto *chevron = new QLabel(m_areaButton);
@@ -323,12 +402,18 @@ QWidget *KaiboDock::buildMainPage()
 	areaInner->addWidget(chevron);
 	connect(m_areaButton, &QPushButton::clicked, this, &KaiboDock::openAreaPicker);
 	rc->addWidget(m_areaButton);
+	// Explains a failed area load without making the person open the picker first.
+	m_areaHint = label({}, "caption", room);
+	m_areaHint->setVisible(false);
+	m_areaHint->setWordWrap(true);
+	rc->addWidget(m_areaHint);
 
 	rc->addSpacing(6);
 	auto *newsHead = new QHBoxLayout();
 	m_newsToggle = button(T("Room.NewsAdd"), "ghost", room);
 	m_newsToggle->setProperty("kbSize", QStringLiteral("sm"));
 	m_newsToggle->setProperty("kbIcon", QStringLiteral("megaphone"));
+	m_newsToggle->setAccessibleName(T("Room.News"));
 	m_newsToggle->setCheckable(true);
 	newsHead->addWidget(m_newsToggle);
 	newsHead->addStretch(1);
@@ -336,6 +421,10 @@ QWidget *KaiboDock::buildMainPage()
 	m_newsCounter->setWordWrap(false);
 	newsHead->addWidget(m_newsCounter);
 	rc->addLayout(newsHead);
+	m_newsHint = label({}, "caption", room);
+	m_newsHint->setWordWrap(true);
+	m_newsHint->setVisible(false);
+	rc->addWidget(m_newsHint);
 	m_news = new QPlainTextEdit(room);
 	m_news->setPlaceholderText(T("Room.NewsPlaceholder"));
 	m_news->setAccessibleName(T("Room.News"));
@@ -346,12 +435,18 @@ QWidget *KaiboDock::buildMainPage()
 			m_controller->setNewsDraft(m_news->toPlainText());
 	});
 	connect(m_newsToggle, &QPushButton::toggled, this, [this](bool on) {
-		m_news->setVisible(on);
-		m_newsCounter->setVisible(on);
-		if (on)
+		if (m_rendering)
+			return;
+		m_newsExpanded = on;
+		render(); // only the visibility/text of the announcement block changes
+		if (on && m_news->isVisible())
 			m_news->setFocus();
 	});
 	rc->addWidget(m_news);
+	m_newsError = label({}, "danger", room);
+	m_newsError->setWordWrap(true);
+	m_newsError->setVisible(false);
+	rc->addWidget(m_newsError);
 
 	rc->addSpacing(4);
 	auto *syncRow = new QHBoxLayout();
@@ -417,7 +512,7 @@ QWidget *KaiboDock::buildMainPage()
 	m_server->setAccessibleName(T("Info.Server"));
 	serverRow->addWidget(m_server, 1);
 	auto *copyServer = iconButton(QStringLiteral("copy"), T("Common.Copy"), m_streamCard);
-	connect(copyServer, &QPushButton::clicked, this, [this] { copyText(m_server->text()); });
+	connect(copyServer, &QPushButton::clicked, this, [this] { copyText(m_server->text(), T("Info.Server")); });
 	serverRow->addWidget(copyServer);
 	sc->addLayout(serverRow);
 	sc->addWidget(label(T("Info.Key"), "strong", m_streamCard));
@@ -433,12 +528,13 @@ QWidget *KaiboDock::buildMainPage()
 	connect(m_keyReveal, &QPushButton::toggled, this, [this](bool on) {
 		m_key->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
 		m_keyReveal->setProperty("kbIcon", on ? QStringLiteral("eye-off") : QStringLiteral("eye"));
-		m_keyReveal->setIcon(theme().icon(m_keyReveal->property("kbIcon").toString()));
+		m_keyReveal->setIcon(
+			theme().icon(m_keyReveal->property("kbIcon").toString(), QStringLiteral("ink-muted"), 16));
 		m_keyReveal->setToolTip(on ? T("Info.Hide") : T("Info.Show"));
 	});
 	keyRow->addWidget(m_keyReveal);
 	auto *copyKey = iconButton(QStringLiteral("copy"), T("Common.Copy"), m_streamCard);
-	connect(copyKey, &QPushButton::clicked, this, [this] { copyText(m_key->text()); });
+	connect(copyKey, &QPushButton::clicked, this, [this] { copyText(m_key->text(), T("Info.Key")); });
 	keyRow->addWidget(copyKey);
 	sc->addLayout(keyRow);
 	sc->addWidget(label(T("Info.Hint"), "caption", m_streamCard));
@@ -458,6 +554,7 @@ QWidget *KaiboDock::buildFaceAuthCard()
 
 	m_faceHeading = label(T("Face.Heading"), "title", c);
 	m_faceHeading->setAlignment(Qt::AlignCenter);
+	m_faceHeading->setWordWrap(true);
 	col->addWidget(m_faceHeading);
 	m_faceHint = label(T("Face.Hint"), "caption", c);
 	m_faceHint->setAlignment(Qt::AlignCenter);
@@ -466,8 +563,6 @@ QWidget *KaiboDock::buildFaceAuthCard()
 	m_faceQr->setAccessibleName(T("Face.QrAccessible"));
 	col->addWidget(m_faceQr, 0, Qt::AlignHCenter);
 
-	auto *row = new QHBoxLayout();
-	row->setSpacing(6);
 	m_faceCancel = button(T("Common.Cancel"), "ghost", c);
 	m_faceCancel->setProperty("kbSize", QStringLiteral("sm"));
 	connect(m_faceCancel, &QPushButton::clicked, m_controller, &LiveController::cancelFaceAuth);
@@ -481,11 +576,15 @@ QWidget *KaiboDock::buildFaceAuthCard()
 	m_faceConfirm = button(T("Face.Done"), "primary", c);
 	m_faceConfirm->setProperty("kbSize", QStringLiteral("sm"));
 	connect(m_faceConfirm, &QPushButton::clicked, m_controller, &LiveController::confirmFaceAuth);
+	// The two secondary actions share a row; the primary action spans the card, so
+	// no label is clipped at the 280px dock minimum.
+	auto *row = new QHBoxLayout();
+	row->setSpacing(theme().length(QStringLiteral("space-2"), 8));
 	row->addWidget(m_faceCancel);
 	row->addWidget(m_faceBrowser);
 	row->addStretch(1);
-	row->addWidget(m_faceConfirm);
 	col->addLayout(row);
+	col->addWidget(m_faceConfirm);
 	c->hide();
 	return c;
 }
@@ -545,9 +644,12 @@ QWidget *KaiboDock::buildSettingsPage()
 	dc->addWidget(label(T("Settings.Data"), "label", data));
 	dc->addWidget(
 		label(T("Settings.DataHint").arg(QString::fromLatin1(secret::protectionName())), "caption", data));
-	m_dataPath = label(m_controller->storageDirectory(), "faint", data);
-	m_dataPath->setTextInteractionFlags(Qt::TextSelectableByMouse);
-	m_dataPath->setWordWrap(true); // the path has no spaces; do not let it widen the dock
+	m_dataPathFull = m_controller->storageDirectory();
+	m_dataPath = label(m_dataPathFull, "faint", data);
+	// A Windows path has no break opportunities: elide it in the middle (see
+	// updateElidedTexts) instead of letting it widen the scroll content.
+	m_dataPath->setWordWrap(false);
+	m_dataPath->setMinimumSize(1, 1);
 	dc->addWidget(m_dataPath);
 	auto *dataRow = new QHBoxLayout();
 	auto *openFolder = button(T("Settings.OpenFolder"), "ghost", data);
@@ -586,13 +688,30 @@ QWidget *KaiboDock::buildSettingsPage()
 
 void KaiboDock::setSettingsOpen(bool open)
 {
+	if (m_settingsOpen == open)
+		return;
 	m_settingsOpen = open;
 	render();
 	m_scroll->verticalScrollBar()->setValue(0);
+	// Keyboard users land on the header action that got them here.
+	(open ? m_backButton : m_settingsButton)->setFocus(Qt::OtherFocusReason);
+}
+
+void KaiboDock::scheduleRender()
+{
+	// A hidden dock does not paint, so do not run a state pass for it either;
+	// showEvent() renders the current state when it comes back.
+	if (!isVisible())
+		return;
+	if (m_renderTimer.isActive())
+		return;
+	m_renderTimer.start();
 }
 
 void KaiboDock::render()
 {
+	if (m_rendering)
+		return; // side effects inside the pass must never recurse into it
 	m_rendering = true;
 	const auto &s = m_controller->state();
 	const Phase phase = m_controller->phase();
@@ -617,6 +736,8 @@ void KaiboDock::render()
 		m_pill->set(StatusPill::Tone::Busy, T("Status.Stopping"));
 	else if (s.busy == Busy::Syncing)
 		m_pill->set(StatusPill::Tone::Busy, T("Status.Saving"));
+	else if (s.face != FaceAuth::None)
+		m_pill->set(StatusPill::Tone::Busy, T("Status.FaceAuth"));
 	else if (s.auth != Auth::SignedIn)
 		m_pill->set(StatusPill::Tone::Neutral,
 			    s.auth == Auth::SignedOut ? T("Status.SignedOut") : T("Status.Connecting"));
@@ -649,24 +770,39 @@ void KaiboDock::render()
 					T("Banner.Import"), T("Banner.Ignore"));
 	else if (!s.legacyAvailable)
 		m_legacyBanner->hide();
-	if (m_picker->isVisible() && m_picker->isLoading() && !s.areasLoading)
-		m_picker->updateData(s.areas, s.recentAreas, s.areaDraft, false);
+	// Offline on the sign-in page: say so instead of showing only a failed QR.
+	if (page == m_loginPage && s.offline) {
+		if (m_loginBanner->isHidden())
+			m_loginBanner->present(Banner::Tone::Error, QStringLiteral("alert"), T("Msg.Offline"),
+					       T("Loading.Retry"));
+	} else {
+		m_loginBanner->hide();
+	}
+	if (m_picker->isVisible() && m_picker->needsUpdate(s.areas, s.recentAreas, s.areaDraft, s.areasLoading))
+		m_picker->updateData(s.areas, s.recentAreas, s.areaDraft, s.areasLoading);
 	if (page == m_loginPage && isVisible() && s.qr == QrPhase::Idle)
 		m_controller->startQrLogin();
 	if (page != m_loginPage && s.auth == Auth::SignedIn && s.qr != QrPhase::Idle)
 		m_controller->stopQrLogin();
 
-	// Account
-	m_name->setText(s.profile.name.empty() ? T("Header.Unknown") : qs(s.profile.name));
-	m_avatar->setName(qs(s.profile.name));
+	// Account — pushed from state on every pass: resetSession() does not re-emit
+	// avatarChanged, so a stale avatar must not survive a sign-out/sign-in.
+	m_nameFull = s.profile.name.empty() ? T("Header.Unknown") : qs(s.profile.name);
+	m_avatar->setImage(s.avatar);
+	m_avatar->setName(m_nameFull);
 	m_avatar->setLive(s.room.live);
 	if (s.roomId > 0)
-		m_roomLabel->setText(T("Header.Room").arg(s.roomId));
+		m_roomLabelFull = T("Header.Room").arg(s.roomId);
 	else
-		m_roomLabel->setText(s.roomLoaded || s.profile.mid ? T("Header.NoRoom") : QString());
-	// The card is narrow: the labels elide, so the full value stays reachable as a tooltip.
-	m_name->setToolTip(m_name->text());
-	m_roomLabel->setToolTip(m_roomLabel->text());
+		m_roomLabelFull = s.roomLoaded || s.profile.mid ? T("Header.NoRoom") : QString();
+	if (m_name->toolTip() != m_nameFull) {
+		m_name->setToolTip(m_nameFull);
+		m_name->setAccessibleName(m_nameFull);
+	}
+	if (m_roomLabel->toolTip() != m_roomLabelFull) {
+		m_roomLabel->setToolTip(m_roomLabelFull);
+		m_roomLabel->setAccessibleName(m_roomLabelFull);
+	}
 	const UiLocale locale = uiLocale();
 	m_followers->setText(T("Stat.Fans").arg(qs(formatCount(s.room.followers, locale))));
 	m_online->setText(T("Stat.Online").arg(qs(formatCount(s.room.online, locale))));
@@ -693,22 +829,41 @@ void KaiboDock::render()
 		areaText = qs(s.room.parentAreaName) + QStringLiteral("  ›  ") + qs(s.room.areaName);
 		areaPicked = true;
 	}
-	m_areaText->setText(areaText);
+	m_areaFull = areaText;
+	const QString areaTip = areaPicked ? areaText : T("Room.PickArea");
+	if (m_areaText->toolTip() != areaTip)
+		m_areaText->setToolTip(areaTip);
 	// The placeholder is a hint, not a selection: keep it muted so it does not read as picked.
-	Theme::setProp(m_areaText, "kbText", areaPicked ? QString() : QStringLiteral("faint"));
+	Theme::setProp(m_areaText, "kbText", areaPicked ? QVariant() : QVariant(QStringLiteral("faint")));
+	const bool areaUnavailable = s.roomLoaded && !s.areasLoading && s.areas.empty();
+	m_areaHint->setText(areaUnavailable ? T("Area.Unavailable") : QString());
+	m_areaHint->setVisible(areaUnavailable);
 
-	m_newsToggle->setVisible(s.newsLoaded);
+	// The announcement row stays visible when the fetch failed: it explains itself
+	// instead of silently disappearing. isChecked() is not UI state — m_newsExpanded is.
+	if (!s.newsLoaded)
+		m_newsExpanded = false;
+	m_newsToggle->setVisible(true);
+	m_newsToggle->setEnabled(s.newsLoaded);
 	m_newsToggle->setText(s.news.empty() && s.newsDraft.isEmpty() ? T("Room.NewsAdd") : T("Room.NewsEdit"));
+	m_newsHint->setText(s.newsLoaded ? QString() : T("Msg.NewsUnavailable"));
+	m_newsHint->setVisible(!s.newsLoaded);
+	{
+		const QSignalBlocker blocker(m_newsToggle);
+		m_newsToggle->setChecked(m_newsExpanded);
+	}
 	if (!m_news->hasFocus() && m_news->toPlainText() != s.newsDraft)
 		m_news->setPlainText(s.newsDraft);
 	const int newsLength = static_cast<int>(utf8Length(ss(s.newsDraft.trimmed())));
 	m_newsCounter->setText(QStringLiteral("%1/%2").arg(newsLength).arg(LiveController::kNewsLimit));
-	const bool newsOpen = m_newsToggle->isChecked() && s.newsLoaded;
+	const bool newsOpen = m_newsExpanded && s.newsLoaded;
 	m_news->setVisible(newsOpen);
 	m_newsCounter->setVisible(newsOpen);
 	const bool newsTooLong = newsLength > LiveController::kNewsLimit;
 	Theme::setProp(m_news, "kbError", newsTooLong);
 	Theme::setProp(m_newsCounter, "kbText", newsTooLong ? QStringLiteral("danger") : QStringLiteral("faint"));
+	m_newsError->setText(T("Msg.NewsTooLong").arg(LiveController::kNewsLimit));
+	m_newsError->setVisible(newsOpen && newsTooLong);
 
 	const bool unsynced = m_controller->hasUnsyncedChanges();
 	m_sync->setEnabled(unsynced && s.busy == Busy::None && !tooLong && newsLength <= LiveController::kNewsLimit);
@@ -721,8 +876,10 @@ void KaiboDock::render()
 	renderClock();
 
 	m_streamCard->setVisible(!s.key.isEmpty());
-	m_server->setText(s.server);
-	m_key->setText(s.key);
+	if (m_server->text() != s.server)
+		m_server->setText(s.server);
+	if (m_key->text() != s.key)
+		m_key->setText(s.key);
 
 	// Settings
 	const QSignalBlocker b1(m_optAutoStart), b2(m_optCloseOnStop), b3(m_optCloseOnExit), b4(m_optRestore),
@@ -738,55 +895,91 @@ void KaiboDock::render()
 			: T("Settings.NotSignedIn"));
 	m_signOut->setVisible(s.auth == Auth::SignedIn);
 
+	// Elide now, and once more after the layout for a freshly shown page has run.
+	updateElidedTexts();
+	m_elideTimer.start();
 	m_rendering = false;
 }
 
 void KaiboDock::renderBanner()
 {
 	const auto &s = m_controller->state();
+	const Phase phase = m_controller->phase();
+
+	// Describe the banner first, then touch the widget only when the description
+	// changed: render() runs on every controller change (each keystroke), and
+	// re-wiring the two banner signals there was pure churn.
+	Banner::Tone tone = Banner::Tone::Info;
+	QString icon = QStringLiteral("info"), text, primary, secondary;
+	int action = 0;
+	if (phase == Phase::Dropped) {
+		tone = Banner::Tone::Error;
+		icon = QStringLiteral("signal");
+		text = T("Banner.Dropped");
+		primary = T("Banner.Restream");
+		secondary = T("Banner.CloseRoom");
+		action = 1;
+	} else if (phase == Phase::RoomOnly && s.busy == Busy::None) {
+		tone = Banner::Tone::Warn;
+		icon = QStringLiteral("alert");
+		text = T("Banner.RoomOnly");
+		primary = T("Banner.StartStream");
+		secondary = T("Banner.CloseRoom");
+		action = 2;
+	} else if (phase == Phase::StreamOnly) {
+		tone = Banner::Tone::Warn;
+		icon = QStringLiteral("alert");
+		text = T("Banner.StreamOnly");
+		primary = T("Banner.OpenRoom");
+		secondary = T("Banner.StopStream");
+		action = 3;
+	} else if (s.offline) {
+		tone = Banner::Tone::Error;
+		icon = QStringLiteral("alert");
+		text = T("Msg.Offline");
+		primary = T("Loading.Retry");
+		action = 4;
+	} else if (s.profile.mid > 0 && s.roomId <= 0) {
+		tone = Banner::Tone::Info;
+		text = T("Banner.NoRoom");
+		primary = T("Banner.OpenRoomCenter");
+		action = 5;
+	}
+	if (text.isEmpty()) {
+		if (!m_bannerKey.isEmpty()) {
+			m_bannerKey.clear();
+			m_banner->hide();
+		}
+		return;
+	}
+	const QString key = QString::number(action) + QLatin1Char('|') + text + QLatin1Char('|') + primary +
+			    QLatin1Char('|') + secondary;
+	if (key == m_bannerKey)
+		return;
+	m_bannerKey = key;
+	m_banner->present(tone, icon, text, primary, secondary);
 	disconnect(m_banner, &Banner::primaryClicked, nullptr, nullptr);
 	disconnect(m_banner, &Banner::secondaryClicked, nullptr, nullptr);
-	auto on = [this](auto primary, auto secondary) {
-		connect(m_banner, &Banner::primaryClicked, this, primary);
-		connect(m_banner, &Banner::secondaryClicked, this, secondary);
-	};
-	auto none = [] {
-	};
-
-	switch (m_controller->phase()) {
-	case Phase::Dropped:
-		m_banner->present(Banner::Tone::Error, QStringLiteral("signal"), T("Banner.Dropped"),
-				  T("Banner.Restream"), T("Banner.CloseRoom"));
-		on([this] { m_controller->startObsStream(); }, [this] { m_controller->closeRoom(); });
-		return;
-	case Phase::RoomOnly:
-		if (s.busy == Busy::None) {
-			m_banner->present(Banner::Tone::Warn, QStringLiteral("alert"), T("Banner.RoomOnly"),
-					  T("Banner.StartStream"), T("Banner.CloseRoom"));
-			on([this] { m_controller->startObsStream(); }, [this] { m_controller->closeRoom(); });
-			return;
-		}
+	switch (action) {
+	case 1: // dropped: stream again / close the room
+	case 2: // room open but OBS not streaming: start streaming / close the room
+		connect(m_banner, &Banner::primaryClicked, this, [this] { m_controller->startObsStream(); });
+		connect(m_banner, &Banner::secondaryClicked, this, [this] { m_controller->closeRoom(); });
 		break;
-	case Phase::StreamOnly:
-		m_banner->present(Banner::Tone::Warn, QStringLiteral("alert"), T("Banner.StreamOnly"),
-				  T("Banner.OpenRoom"), T("Banner.StopStream"));
-		on([this] { m_controller->goLive(); }, [this] { m_controller->stopObsStream(); });
-		return;
+	case 3: // OBS streaming but room closed: open the room / stop streaming
+		connect(m_banner, &Banner::primaryClicked, this, [this] { m_controller->goLive(); });
+		connect(m_banner, &Banner::secondaryClicked, this, [this] { m_controller->stopObsStream(); });
+		break;
+	case 4:
+		connect(m_banner, &Banner::primaryClicked, this, [this] { m_controller->refresh(); });
+		break;
+	case 5:
+		connect(m_banner, &Banner::primaryClicked, this,
+			[] { QDesktopServices::openUrl(QUrl(QString::fromLatin1(kLiveCenterUrl))); });
+		break;
 	default:
 		break;
 	}
-	if (s.offline) {
-		m_banner->present(Banner::Tone::Error, QStringLiteral("alert"), T("Msg.Offline"), T("Loading.Retry"));
-		on([this] { m_controller->refresh(); }, none);
-		return;
-	}
-	if (s.profile.mid > 0 && s.roomId <= 0) {
-		m_banner->present(Banner::Tone::Info, QStringLiteral("info"), T("Banner.NoRoom"),
-				  T("Banner.OpenRoomCenter"));
-		on([] { QDesktopServices::openUrl(QUrl(QString::fromLatin1(kLiveCenterUrl))); }, none);
-		return;
-	}
-	m_banner->hide();
 }
 
 // Renders the face-verification card: the code, what to do with it, and whether the
@@ -847,20 +1040,37 @@ void KaiboDock::renderGoLive()
 	// keep the button visibly (and actually) disabled instead of swallowing clicks. A
 	// live room always offers "End", even if a stale verification state is still around.
 	enabled = enabled && s.busy == Busy::None && (s.face == FaceAuth::None || roomLive);
-	m_goLive->setEnabled(enabled);
+	if (m_goLive->isEnabled() != enabled)
+		m_goLive->setEnabled(enabled);
 	Theme::setProp(m_goLive, "kbState", state);
-	m_goLive->setText(text);
-	m_goLive->setAccessibleName(text);
-	m_goLive->setIcon(icon.isEmpty() ? QIcon()
-					 : QIcon(theme().pixmap(icon,
-								theme().color(state == QStringLiteral("end")
-										      ? QStringLiteral("danger")
-										      : QStringLiteral("on-brand")),
-								20, devicePixelRatioF())));
+	if (m_goLive->text() != text)
+		m_goLive->setText(text);
+	// Stable accessible name = the action; the state/hint is the description, so a
+	// screen reader hears "Go live, button, disabled — Choose an area first".
+	const QString actionName = roomLive ? T("Button.End") : T("Button.Start");
+	if (m_goLive->accessibleName() != actionName)
+		m_goLive->setAccessibleName(actionName);
+	const QString description = (text != actionName && !text.isEmpty())
+					    ? (hint.isEmpty() ? text : text + QStringLiteral(" — ") + hint)
+					    : hint;
+	if (m_goLive->accessibleDescription() != description)
+		m_goLive->setAccessibleDescription(description);
+	// The icon is a tinted SVG raster; keep it out of the per-keystroke render path.
+	const QString iconKey = icon + QLatin1Char('|') + state;
+	if (iconKey != m_goLiveIconKey) {
+		m_goLiveIconKey = iconKey;
+		m_goLive->setIcon(icon.isEmpty()
+					  ? QIcon()
+					  : QIcon(theme().pixmap(icon,
+								 theme().color(state == QStringLiteral("end")
+										       ? QStringLiteral("danger")
+										       : QStringLiteral("on-brand")),
+								 20, devicePixelRatioF())));
+	}
 	m_goLiveHint->setText(hint);
 	m_goLiveHint->setVisible(!hint.isEmpty());
 	m_clockRow->setVisible(roomLive && s.liveSince > 0);
-	if (roomLive && s.liveSince > 0) {
+	if (roomLive && s.liveSince > 0 && isVisible()) {
 		if (!m_clockTimer.isActive())
 			m_clockTimer.start();
 	} else {
@@ -912,6 +1122,97 @@ void KaiboDock::renderQr()
 	}
 }
 
+// Elides the labels that may be wider than the dock. The full values stay in the
+// tooltips and accessible names; this only affects what is painted.
+void KaiboDock::updateElidedTexts()
+{
+	auto apply = [](QLabel *label, const QString &full, Qt::TextElideMode mode) {
+		const int width = label->width() - 2;
+		const QString shown = width > 0 ? label->fontMetrics().elidedText(full, mode, width) : full;
+		if (label->text() != shown)
+			label->setText(shown);
+	};
+	apply(m_name, m_nameFull, Qt::ElideRight);
+	apply(m_roomLabel, m_roomLabelFull, Qt::ElideRight);
+	apply(m_dataPath, m_dataPathFull, Qt::ElideMiddle);
+	apply(m_areaText, m_areaFull, Qt::ElideRight);
+}
+
+// OBS 33 added a "full-height docks" toggle (Docks menu, QAction objectName
+// "sideDocks", config [BasicWindow] SideDocks). With it off, the bottom dock area
+// owns the bottom-right corner, so this panel can never span the right column.
+// Say so once, politely, and let the person dismiss it for good.
+void KaiboDock::updateLayoutHint()
+{
+	if (!m_hintWrap)
+		return; // a changeEvent can arrive while the constructor is still building
+	loadLayoutHintDismissed();
+	QAction *action = sideDocksAction();
+	if (!action && m_hintRetries < 5) {
+		// OBS 33 builds its Docks menu after plugins load on a cold start; retry
+		// a few times instead of giving up on the first show.
+		++m_hintRetries;
+		QTimer::singleShot(1500, this, &KaiboDock::updateLayoutHint);
+		return;
+	}
+	const bool show = !m_hintDismissed && action && !action->isChecked();
+	if (!show) {
+		m_hintWrap->hide();
+		return;
+	}
+	if (m_hintBanner->isHidden())
+		m_hintBanner->present(Banner::Tone::Info, QStringLiteral("info"), T("Hint.FullHeight"), {},
+				      T("Common.Dismiss"));
+	if (!m_hintWrap->isVisible())
+		m_hintWrap->show();
+}
+
+void KaiboDock::loadLayoutHintDismissed()
+{
+	if (m_hintDismissLoaded)
+		return;
+	m_hintDismissLoaded = true;
+	const QString directory = m_controller->storageDirectory();
+	if (directory.isEmpty())
+		return;
+	QSettings settings(QDir(directory).filePath(QStringLiteral("ui-hints.ini")), QSettings::IniFormat);
+	m_hintDismissed = settings.value(QStringLiteral("fullHeightHintDismissed"), false).toBool();
+}
+
+void KaiboDock::dismissLayoutHint()
+{
+	m_hintDismissed = true;
+	m_hintWrap->hide();
+	const QString directory = m_controller->storageDirectory();
+	if (directory.isEmpty())
+		return;
+	QSettings settings(QDir(directory).filePath(QStringLiteral("ui-hints.ini")), QSettings::IniFormat);
+	settings.setValue(QStringLiteral("fullHeightHintDismissed"), true);
+	settings.sync();
+}
+
+QAction *KaiboDock::sideDocksAction()
+{
+	if (m_sideDocksAction)
+		return m_sideDocksAction;
+	QMainWindow *main = qobject_cast<QMainWindow *>(window());
+	if (!main) {
+		// A floating dock's window() is the QDockWidget; fall back to the app's main
+		// window so the hint also appears while the panel is undocked.
+		for (QWidget *widget : QApplication::topLevelWidgets()) {
+			main = qobject_cast<QMainWindow *>(widget);
+			if (main)
+				break;
+		}
+	}
+	if (!main)
+		return nullptr;
+	m_sideDocksAction = main->findChild<QAction *>(QStringLiteral("sideDocks"));
+	if (m_sideDocksAction)
+		connect(m_sideDocksAction, &QAction::toggled, this, &KaiboDock::updateLayoutHint);
+	return m_sideDocksAction;
+}
+
 // ------------------------------------------------------------------ theme
 
 void KaiboDock::applyTheme()
@@ -924,7 +1225,8 @@ void KaiboDock::applyTheme()
 		if (icon.isEmpty())
 			continue;
 		const QString token = b->property("kbIconToken").toString();
-		b->setIcon(theme().icon(icon, token.isEmpty() ? QStringLiteral("ink-muted") : token));
+		const int side = b->iconSize().isValid() ? b->iconSize().width() : 18;
+		b->setIcon(theme().icon(icon, token.isEmpty() ? QStringLiteral("ink-muted") : token, side));
 	}
 	for (QLabel *l : findChildren<QLabel *>()) {
 		const QString icon = l->property("kbIcon").toString();
@@ -934,7 +1236,11 @@ void KaiboDock::applyTheme()
 		l->setPixmap(theme().pixmap(icon, theme().color(token), l->width(), devicePixelRatioF()));
 	}
 	m_banner->refreshIcon();
+	m_hintBanner->refreshIcon();
+	m_loginBanner->refreshIcon();
 	m_legacyBanner->refreshIcon();
+	m_toast->refreshIcon();
+	m_picker->refreshTheme();
 	renderGoLive();
 	renderQr();
 	update();
@@ -948,13 +1254,19 @@ void KaiboDock::changeEvent(QEvent *event)
 		if (theme().followPalette(QApplication::palette()))
 			applyTheme();
 	}
+	// The dock can be re-parented when OBS restores the saved layout or the panel is
+	// floated; the main-window dock action may only become reachable then.
+	if (event->type() == QEvent::ParentChange)
+		updateLayoutHint();
 }
 
 void KaiboDock::resizeEvent(QResizeEvent *event)
 {
 	QWidget::resizeEvent(event);
-	if (m_toast->isVisible())
-		m_toast->reposition();
+	// Elide once now and once after the layout settles; the single-shot timer
+	// coalesces the bursts produced while the dock separator is dragged.
+	updateElidedTexts();
+	m_elideTimer.start();
 }
 
 void KaiboDock::showEvent(QShowEvent *event)
@@ -962,14 +1274,27 @@ void KaiboDock::showEvent(QShowEvent *event)
 	QWidget::showEvent(event);
 	if (theme().followPalette(QApplication::palette()))
 		applyTheme();
+	m_pill->setActive(true);
 	render();
-	if (m_controller->state().auth == Auth::SignedIn)
+	renderClock();
+	updateLayoutHint();
+	renderGoLive(); // reschedules the live clock
+	// Do not hit the network every time an OBS dock is re-shown.
+	const qint64 now = QDateTime::currentMSecsSinceEpoch();
+	if (m_controller->state().auth == Auth::SignedIn && now - m_lastRefreshMs > 5000) {
+		m_lastRefreshMs = now;
 		m_controller->refresh();
+	}
 }
 
 void KaiboDock::hideEvent(QHideEvent *event)
 {
 	QWidget::hideEvent(event);
+	// Nothing ticks, blinks or re-renders while the dock is hidden.
+	m_renderTimer.stop();
+	m_elideTimer.stop();
+	m_clockTimer.stop();
+	m_pill->setActive(false);
 	if (m_controller->state().auth == Auth::SignedOut)
 		m_controller->stopQrLogin(); // no polling while nobody can see the code
 	if (m_keyReveal->isChecked())
@@ -980,6 +1305,13 @@ void KaiboDock::hideEvent(QHideEvent *event)
 
 void KaiboDock::requestGoLive()
 {
+	// Shared by the button, the OBS hotkey and Ctrl+Enter. It never ends a
+	// broadcast and ignores the shortcut while another action is pending.
+	if (m_settingsOpen)
+		return;
+	const auto &s = m_controller->state();
+	if (s.auth != Auth::SignedIn || s.busy != Busy::None || s.face != FaceAuth::None)
+		return;
 	const Phase phase = m_controller->phase();
 	if (phase == Phase::Offline || phase == Phase::StreamOnly)
 		m_controller->goLive();
@@ -1011,6 +1343,24 @@ void KaiboDock::openAreaPicker()
 	m_picker->open(m_areaButton, s.areas, s.recentAreas, s.areaDraft, s.areasLoading);
 }
 
+// Anchors a popup menu to the button that opened it; when the button is activated
+// from the keyboard QCursor::pos() may be anywhere on screen.
+void KaiboDock::execMenuAt(QMenu &menu, QWidget *anchor)
+{
+	if (!anchor)
+		return;
+	menu.ensurePolished();
+	const QSize hint = menu.sizeHint();
+	QPoint pos = anchor->mapToGlobal(QPoint(0, anchor->height() + 4));
+	if (const QScreen *screen = anchor->screen()) {
+		const QRect area = screen->availableGeometry();
+		if (pos.y() + hint.height() > area.bottom())
+			pos.setY(anchor->mapToGlobal(QPoint(0, -hint.height() - 4)).y());
+		pos.setX(qBound(area.left(), pos.x(), area.right() - hint.width()));
+	}
+	menu.exec(pos);
+}
+
 void KaiboDock::showTitleHistory()
 {
 	const auto &titles = m_controller->state().recentTitles;
@@ -1027,24 +1377,32 @@ void KaiboDock::showTitleHistory()
 			});
 		}
 	}
-	menu.exec(QCursor::pos());
+	m_titleHistoryButton->setDown(false);
+	execMenuAt(menu, m_titleHistoryButton);
 }
 
 void KaiboDock::showAccountMenu()
 {
 	const auto &s = m_controller->state();
 	QMenu menu(this);
-	connect(menu.addAction(theme().icon(QStringLiteral("external")), T("Menu.OpenCenter")), &QAction::triggered,
-		this, [] { QDesktopServices::openUrl(QUrl(QString::fromLatin1(kLiveCenterUrl))); });
+	connect(menu.addAction(theme().icon(QStringLiteral("external"), QStringLiteral("ink-muted"), 16),
+			       T("Menu.OpenCenter")),
+		&QAction::triggered, this,
+		[] { QDesktopServices::openUrl(QUrl(QString::fromLatin1(kLiveCenterUrl))); });
 	if (s.roomId > 0)
-		connect(menu.addAction(theme().icon(QStringLiteral("copy")), T("Menu.CopyRoomLink")),
-			&QAction::triggered, this, [this, id = s.roomId] { copyText(roomLink(id)); });
-	connect(menu.addAction(theme().icon(QStringLiteral("refresh")), T("Menu.Refresh")), &QAction::triggered,
-		m_controller, &LiveController::refresh);
+		connect(menu.addAction(theme().icon(QStringLiteral("copy"), QStringLiteral("ink-muted"), 16),
+				       T("Menu.CopyRoomLink")),
+			&QAction::triggered, this,
+			[this, id = s.roomId] { copyText(roomLink(id), T("Menu.CopyRoomLink")); });
+	connect(menu.addAction(theme().icon(QStringLiteral("refresh"), QStringLiteral("ink-muted"), 16),
+			       T("Menu.Refresh")),
+		&QAction::triggered, m_controller, &LiveController::refresh);
 	menu.addSeparator();
-	connect(menu.addAction(theme().icon(QStringLiteral("settings")), T("Settings.Title")), &QAction::triggered,
-		this, [this] { setSettingsOpen(true); });
-	menu.exec(QCursor::pos());
+	connect(menu.addAction(theme().icon(QStringLiteral("settings"), QStringLiteral("ink-muted"), 16),
+			       T("Settings.Title")),
+		&QAction::triggered, this, [this] { setSettingsOpen(true); });
+	m_moreButton->setDown(false);
+	execMenuAt(menu, m_moreButton);
 }
 
 void KaiboDock::confirmDeleteData()
@@ -1063,18 +1421,20 @@ void KaiboDock::confirmDeleteData()
 		return;
 	QString error;
 	if (m_controller->deleteAllData(error))
-		m_toast->showMessage(0, T("Msg.DataDeleted"), {});
+		m_toast->showMessage(ToastKind::Ok, T("Msg.DataDeleted"), {});
 	else
-		m_toast->showMessage(2, T("Msg.DataDeleteFailed"), error);
+		m_toast->showMessage(ToastKind::Error, T("Msg.DataDeleteFailed"), error);
 	setSettingsOpen(false);
 }
 
-void KaiboDock::copyText(const QString &text)
+void KaiboDock::copyText(const QString &text, const QString &what)
 {
 	if (text.isEmpty())
 		return;
 	QApplication::clipboard()->setText(text);
-	m_toast->showMessage(0, T("Msg.Copied"), {});
+	// The caption line says what was copied — stream key and server differ a lot
+	// in consequence.
+	m_toast->showMessage(ToastKind::Ok, T("Msg.Copied"), what);
 }
 
 void KaiboDock::readOptions()

@@ -20,6 +20,9 @@ add_executable(
   ${KAIBO_SRC}/vendor/json11/json11.cpp
 )
 target_include_directories(kaibo-tests PRIVATE "${KAIBO_SRC}")
+# CancelScope is thread-scoped, so the tests use std::thread.
+find_package(Threads REQUIRED)
+target_link_libraries(kaibo-tests PRIVATE Threads::Threads)
 if(WIN32)
   target_link_libraries(kaibo-tests PRIVATE crypt32)
 endif()

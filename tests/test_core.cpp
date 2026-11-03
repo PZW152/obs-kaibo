@@ -3,19 +3,23 @@
 #include "app/secret_store.hpp"
 #include "core/areas.hpp"
 #include "core/bili_client.hpp"
+#include "core/cancel_scope.hpp"
 #include "core/cookies.hpp"
 #include "core/face_auth.hpp"
 #include "core/json_util.hpp"
 #include "core/md5.hpp"
+#include "core/preflight.hpp"
 #include "core/settings_model.hpp"
 #include "core/text.hpp"
 #include "vendor/json11/json11.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <deque>
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -364,13 +368,30 @@ TEST(room_info_parsing)
 	CHECK_EQ(round.roomId, 1);
 }
 
-TEST(fetch_bytes_rejects_plain_http)
+TEST(fetch_bytes_upgrades_insecure_urls)
 {
 	FakeTransport http;
 	BiliClient client(http);
 	std::string bytes;
-	CHECK(client.fetchBytes("http://i0.hdslb.com/a.jpg", bytes).kind == ErrorKind::Parse);
-	CHECK(http.requests.empty());
+	// Older profile data can still carry http:// or protocol-relative image URLs. They
+	// are upgraded, never fetched over plain http.
+	http.push(200, "PNGDATA");
+	CHECK(!client.fetchBytes("http://i0.hdslb.com/a.jpg", bytes));
+	CHECK_EQ(bytes, "PNGDATA");
+	CHECK_EQ(http.requests.back().url, "https://i0.hdslb.com/a.jpg");
+
+	http.push(200, "PNG2");
+	CHECK(!client.fetchBytes("//i1.hdslb.com/b.jpg", bytes));
+	CHECK_EQ(http.requests.back().url, "https://i1.hdslb.com/b.jpg");
+
+	const size_t before = http.requests.size();
+	CHECK(client.fetchBytes("ftp://i0/a.jpg", bytes).kind == ErrorKind::Parse);
+	CHECK(client.fetchBytes("i0/a.jpg", bytes).kind == ErrorKind::Parse);
+	CHECK_EQ(http.requests.size(), before); // refused without a request
+
+	// The oversize guard still applies to a real download.
+	http.push(200, std::string(2 * 1024 * 1024 + 1, 'x'));
+	CHECK(client.fetchBytes("https://i0/big.jpg", bytes).kind == ErrorKind::Parse);
 }
 
 TEST(settings_round_trip_and_defaults)
@@ -434,7 +455,23 @@ TEST(atomic_write_keeps_backup)
 	CHECK(readFile(path, data) && data == "two");
 	CHECK(readFile(path + ".bak", data) && data == "one");
 	CHECK(!readFile(dir + "/missing.json", data));
+
+	// The first write of a path has no previous content to back up, and no temporary
+	// file may survive a successful save.
+	const std::string first = dir + "/first.json";
+	CHECK(writeFileAtomic(first, "x", error));
 	std::error_code ec;
+	CHECK(!std::filesystem::exists(first + ".bak", ec));
+	CHECK(!std::filesystem::exists(first + ".tmp", ec));
+	CHECK(!std::filesystem::exists(path + ".tmp", ec));
+
+	// A parent that is a file cannot be created; the failure is reported and nothing is
+	// left behind.
+	const std::string blocked = dir + "/first.json/child.json";
+	CHECK(!writeFileAtomic(blocked, "y", error));
+	CHECK(!error.empty());
+	CHECK(!std::filesystem::exists(blocked + ".tmp", ec));
+
 	std::filesystem::remove_all(dir, ec);
 }
 
@@ -644,6 +681,300 @@ TEST(atomic_write_uses_owner_only_permissions)
 	std::filesystem::remove_all(dir, ec);
 }
 #endif
+
+TEST(json_int_rejects_unsafe_numbers)
+{
+	int64_t value = 0;
+	// json11 keeps numbers as double. An out-of-range or fractional value must not be
+	// cast to int64_t: that cast is undefined behaviour.
+	CHECK(!jsonInt(json11::Json(1e300), value));
+	CHECK(!jsonInt(json11::Json(-1e300), value));
+	CHECK(!jsonInt(json11::Json(9.3e18), value)); // above INT64_MAX
+	CHECK(!jsonInt(json11::Json(1.5), value));
+	CHECK(jsonInt(json11::Json(42.0), value) && value == 42);
+	CHECK(jsonInt(json11::Json(-7.0), value) && value == -7);
+	CHECK(jsonInt(json11::Json(1e18), value) && value == 1000000000000000000LL);
+}
+
+TEST(malformed_success_responses_are_parse_errors)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("SESSDATA=s; bili_jct=c; DedeUserID=7"));
+	Profile profile;
+	// A success envelope whose payload does not look like a profile must not be read as
+	// "logged out": that would delete a valid stored session.
+	http.push(200, R"({"code":0,"data":{}})");
+	CHECK(client.fetchProfile(profile).kind == ErrorKind::Parse);
+	http.push(200, R"({"code":0})");
+	CHECK(client.fetchProfile(profile).kind == ErrorKind::Parse);
+	http.push(200, R"({"code":0,"data":{"isLogin":false}})");
+	CHECK(client.fetchProfile(profile).kind == ErrorKind::NotLoggedIn);
+	// A bool is not an envelope code.
+	http.push(200, R"({"code":true,"data":{"isLogin":true,"mid":1}})");
+	CHECK(client.fetchProfile(profile).kind == ErrorKind::Parse);
+	// A room answer without live_status cannot be read as "closed".
+	http.push(200, R"({"code":0,"data":{"room_id":5,"title":"t"}})");
+	RoomInfo info;
+	CHECK(client.fetchRoomInfo(5, info).kind == ErrorKind::Parse);
+	http.push(200, R"({"code":0,"data":{}})");
+	CHECK(client.fetchRoomInfo(5, info).kind == ErrorKind::Parse);
+	http.push(200, R"({"code":0,"data":{"live_status":0,"room_id":5}})");
+	CHECK(!client.fetchRoomInfo(5, info));
+	CHECK(!info.live);
+	// The announcement payload has to be an object too.
+	std::string news;
+	http.push(200, R"({"code":0,"data":null})");
+	CHECK(client.fetchRoomNews(5, news).kind == ErrorKind::Parse);
+	http.push(200, R"({"code":0,"data":{"content":"hello"}})");
+	CHECK(!client.fetchRoomNews(5, news) && news == "hello");
+}
+
+TEST(profile_fills_missing_device_uid)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("SESSDATA=s; bili_jct=c")); // no DedeUserID
+	http.push(200, R"({"code":0,"data":{"isLogin":true,"mid":4242,"uname":"x","face":""}})");
+	Profile profile;
+	CHECK(!client.fetchProfile(profile));
+	CHECK_EQ(client.cookies().uid(), "4242");
+
+	// With the uid filled in, the 60043 face-auth page can name the account.
+	http.push(200, R"({"code":0,"data":{"build":9,"curr_version":"7.0"}})");
+	http.push(200, R"({"code":60043,"message":"need face"})");
+	LiveStart start;
+	client.startLive(1, 2, start);
+	CHECK(start.faceAuthUrl.find("mid=4242") != std::string::npos);
+}
+
+TEST(qr_login_keeps_device_identity)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("buvid3=DEV3; buvid4=DEV4; b_nut=123"));
+	QrState state = QrState::Waiting;
+	http.push(200, R"({"code":0,"data":{"code":0,"url":"https://x/?DedeUserID=5&SESSDATA=s%2C1&bili_jct=j"}})");
+	http.push(200, ""); // the ticket URL gives nothing; legacy query cookies are used
+	CHECK(!client.pollQr("k", state));
+	CHECK(state == QrState::Confirmed);
+	CHECK(client.cookies().hasSession());
+	CHECK_EQ(client.cookies().get("buvid3"), "DEV3");
+	CHECK_EQ(client.cookies().get("buvid4"), "DEV4");
+	CHECK_EQ(client.cookies().get("b_nut"), "123");
+}
+
+TEST(bilibili_ingest_detection)
+{
+	CHECK(isBilibiliIngestUrl("rtmp://live-push.bilivideo.com/live-bvc/"));
+	CHECK(isBilibiliIngestUrl("rtmp://txy.live-play.acgvideo.com/live-bvc/"));
+	CHECK(isBilibiliIngestUrl("rtmp://js.live-play.acgvideo.com/live-bvc/"));
+	CHECK(isBilibiliIngestUrl("rtmp://live-1.acg.tv/live/"));
+	CHECK(isBilibiliIngestUrl("rtmp://live-push.bilivideo.com:1935/live-bvc/"));
+	CHECK(isBilibiliIngestUrl("RTMP://LIVE-PUSH.BILIVIDEO.COM/live-bvc/"));
+	CHECK(!isBilibiliIngestUrl("rtmp://a.rtmp.youtube.com/live2"));
+	CHECK(!isBilibiliIngestUrl("rtmp://live.twitch.tv/app"));
+	CHECK(!isBilibiliIngestUrl(""));
+	// Host-boundary matching: a substring in the path or a look-alike domain must never
+	// be mistaken for Bilibili (this decides whether the person's service is replaced).
+	CHECK(!isBilibiliIngestUrl("rtmp://evil.test/bilivideo.com"));
+	CHECK(!isBilibiliIngestUrl("rtmp://live-push.bilivideo.com.evil.test/live"));
+	CHECK(!isBilibiliIngestUrl("rtmp://notbilivideo.com/live"));
+	CHECK(!isBilibiliIngestUrl("rtmp://notacg.tv/live"));
+	CHECK(!isBilibiliIngestUrl("https://bilivideo.com/live")); // not an RTMP server URL
+}
+
+TEST(session_guards_skip_network_calls)
+{
+	FakeTransport http;
+	BiliClient client(http); // no cookies at all
+	CHECK(client.stopLive(1).kind == ErrorKind::NotLoggedIn);
+	CHECK(client.updateRoom(1, std::string("t"), 2).kind == ErrorKind::NotLoggedIn);
+	CHECK(client.updateNews(1, 2, "n").kind == ErrorKind::NotLoggedIn);
+	CHECK(http.requests.empty());
+}
+
+TEST(start_live_requires_version_info)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("SESSDATA=s; bili_jct=c"));
+	LiveStart start;
+	http.push(200, R"({"code":0,"data":{}})");
+	CHECK(client.startLive(1, 2, start).kind == ErrorKind::Parse);
+	CHECK_EQ(http.requests.size(), 1u); // no start request without the version
+	http.push(200, R"({"code":0,"data":{"build":9,"curr_version":""}})");
+	CHECK(client.startLive(1, 2, start).kind == ErrorKind::Parse);
+	CHECK_EQ(http.requests.size(), 2u);
+}
+
+TEST(logout_sends_csrf)
+{
+	FakeTransport http;
+	BiliClient client(http);
+	client.setCookies(CookieJar::fromHeader("SESSDATA=s; bili_jct=CSRF; DedeUserID=7"));
+	http.push(200, R"({"code":0})");
+	CHECK(!client.logout());
+	const auto &request = http.requests.back();
+	CHECK_EQ(request.method, "POST");
+	CHECK(request.url.find("/login/exit/v2") != std::string::npos);
+	CHECK(request.body.find("biliCSRF=CSRF") != std::string::npos);
+}
+
+TEST(app_signature_with_percent_encoding)
+{
+	// Independently computed reference with Python:
+	//   md5("appkey=aae92bc66f3edfab&room_id=1&title=a%20b" + app secret)
+	// It pins both the sort order and the percent-encoding used inside the signature.
+	const std::string signedQuery = BiliClient::signParams({{"title", "a b"}, {"room_id", "1"}});
+	CHECK_EQ(signedQuery, "appkey=aae92bc66f3edfab&room_id=1&title=a%20b&sign="
+			      "173c5abf1d7c7e34f9e116e9c03d983e");
+}
+
+TEST(cookie_jar_duplicates_and_equality)
+{
+	auto jar = CookieJar::fromHeader("a=1; a=2; b=x=y; c; =d");
+	CHECK_EQ(jar.get("a"), "2"); // a cookie name is unique: last value wins
+	CHECK_EQ(jar.get("b"), "x=y");
+	CHECK_EQ(jar.header(), "a=2; b=x=y");
+	jar.set("b", ""); // empty removes every occurrence
+	CHECK_EQ(jar.header(), "a=2");
+	jar.apply({"z=1", "z=2"});
+	CHECK_EQ(jar.get("z"), "2");
+	CHECK_EQ(jar.header(), "a=2; z=2");
+}
+
+TEST(text_helper_edges)
+{
+	CHECK_EQ(formatClock(59), "00:00:59");
+	CHECK_EQ(formatClock(3599), "00:59:59");
+	CHECK_EQ(formatClock(3600), "01:00:00");
+	CHECK_EQ(queryValue("https://x/?a=1&a=2&b", "a"), "1"); // first occurrence
+	CHECK_EQ(queryValue("https://x/?b", "b"), "");
+	CHECK_EQ(trim(" \t x \n"), "x");
+	CHECK(trim(" \t").empty());
+}
+
+TEST(go_live_preflight_rules)
+{
+	auto find = [](const std::vector<PreflightIssue> &issues, PreflightCode code) -> const PreflightIssue * {
+		for (const PreflightIssue &issue : issues)
+			if (issue.code == code)
+				return &issue;
+		return nullptr;
+	};
+
+	// Signed out: exactly one blocking error.
+	PreflightInput signedOut;
+	auto issues = computePreflight(signedOut);
+	CHECK_EQ(issues.size(), 1u);
+	CHECK_EQ(issues[0].code, PreflightCode::NotSignedIn);
+	CHECK_EQ(issues[0].severity, PreflightSeverity::Error);
+	CHECK(preflightBlocked(issues));
+
+	// The initial sign-in check is a warning, not an error.
+	PreflightInput checking;
+	checking.sessionChecking = true;
+	issues = computePreflight(checking);
+	CHECK_EQ(issues.size(), 1u);
+	CHECK_EQ(issues[0].code, PreflightCode::Connecting);
+	CHECK_EQ(issues[0].severity, PreflightSeverity::Warning);
+	CHECK(!preflightBlocked(issues));
+
+	// A ready state has nothing to say.
+	PreflightInput ready;
+	ready.signedIn = true;
+	ready.roomLoaded = true;
+	ready.roomId = 1;
+	ready.areaId = 86;
+	ready.areasLoaded = true;
+	ready.titleLength = 5;
+	ready.newsLoaded = true;
+	ready.newsLength = 5;
+	issues = computePreflight(ready);
+	CHECK(issues.empty());
+	CHECK(!preflightBlocked(issues));
+
+	// Errors are reported with their locale argument, before the warnings.
+	PreflightInput bad = ready;
+	bad.areaLocked = true;
+	bad.titleLength = 41;
+	bad.newsLength = 61;
+	bad.offline = true;
+	issues = computePreflight(bad);
+	CHECK(preflightBlocked(issues));
+	CHECK_EQ(issues[0].code, PreflightCode::TitleTooLong);
+	CHECK_EQ(find(issues, PreflightCode::TitleTooLong)->argument, 40);
+	CHECK_EQ(find(issues, PreflightCode::NewsTooLong)->argument, 60);
+	// lock_status can be stale (the list is cached), so a locked area is advisory only:
+	// Bilibili still has the last word when the start request is made.
+	CHECK_EQ(find(issues, PreflightCode::AreaLocked)->severity, PreflightSeverity::Warning);
+	CHECK_EQ(find(issues, PreflightCode::Offline)->severity, PreflightSeverity::Warning);
+	size_t firstWarning = issues.size();
+	for (size_t i = 0; i < issues.size(); ++i) {
+		if (issues[i].severity == PreflightSeverity::Warning) {
+			firstWarning = i;
+			break;
+		}
+	}
+	CHECK(firstWarning < issues.size());
+	for (size_t i = firstWarning; i < issues.size(); ++i)
+		CHECK_EQ(issues[i].severity, PreflightSeverity::Warning);
+
+	// A missing room hides the area checks (there is nothing to choose for yet).
+	PreflightInput noRoom = ready;
+	noRoom.roomId = 0;
+	issues = computePreflight(noRoom);
+	CHECK(find(issues, PreflightCode::NoRoom) != nullptr);
+	CHECK(find(issues, PreflightCode::PickArea) == nullptr);
+
+	// A missing area blocks; a locked one only warns (see above).
+	PreflightInput noArea = ready;
+	noArea.areaId = 0;
+	issues = computePreflight(noArea);
+	CHECK_EQ(find(issues, PreflightCode::PickArea)->severity, PreflightSeverity::Error);
+
+	// Advisories never block: untitled, room already live, unsynced edits, no area list.
+	PreflightInput advisories = ready;
+	advisories.titleLength = 0;
+	advisories.newsLength = 0;
+	advisories.roomLive = true;
+	advisories.unsyncedChanges = true;
+	advisories.areasLoaded = false;
+	issues = computePreflight(advisories);
+	CHECK(!preflightBlocked(issues));
+	CHECK(find(issues, PreflightCode::NoTitle) != nullptr);
+	CHECK(find(issues, PreflightCode::RoomLive) != nullptr);
+	CHECK(find(issues, PreflightCode::UnsyncedChanges) != nullptr);
+	CHECK(find(issues, PreflightCode::AreasUnavailable) != nullptr);
+	// ... but a list that is still loading is not a warning yet.
+	advisories.areasLoading = true;
+	CHECK(find(computePreflight(advisories), PreflightCode::AreasUnavailable) == nullptr);
+}
+
+TEST(cancel_scope_is_thread_scoped)
+{
+	CancelScope scope;
+	CHECK(!scope.requested());
+	std::atomic<bool> beforeRequest{true};
+	std::atomic<bool> afterRequest{false};
+	std::thread worker([&] {
+		scope.attachToCurrentThread();
+		beforeRequest.store(scope.requested());
+		scope.request();
+		afterRequest.store(scope.requested());
+	});
+	worker.join();
+	CHECK(!beforeRequest.load());
+	CHECK(afterRequest.load()); // the owning thread observes the request
+	// The regression this guards: during OBS exit the worker's request is cancelled, and
+	// the synchronous room close on the UI thread must still be allowed to run.
+	CHECK(!scope.requested());
+	scope.attachToCurrentThread();
+	CHECK(scope.requested());
+	scope.reset();
+	CHECK(!scope.requested());
+}
 
 int main()
 {

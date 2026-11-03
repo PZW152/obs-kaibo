@@ -54,12 +54,39 @@ function(_setup_obs_studio)
 
   if(OS_WINDOWS)
     set(_cmake_generator "${CMAKE_GENERATOR}")
-    set(_cmake_arch "-A ${arch},version=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
-    set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION} -DCMAKE_ENABLE_SCRIPTING=OFF")
+    if(_obs_version VERSION_LESS 31.0.0)
+      # OBS 30 on Windows has no complete CMake 3.0 framework (the branch does
+      # not add deps/, so OBS::w32-pthreads is missing); its own build uses the
+      # legacy 2.0 framework, which also installs the Development files under
+      # the obs_libraries component instead of Development.
+      set(_obs_cmake_version "2.0.0")
+      set(_obs_dependency_component "obs_libraries")
+      set(_cmake_arch "-A ${arch}")
+    else()
+      set(_obs_cmake_version "3.0.0")
+      set(_obs_dependency_component "Development")
+      set(_cmake_arch "-A ${arch},version=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+    endif()
+    # _cmake_extra must be a CMake list: on POSIX the nested configure receives
+    # the argv directly, so space-joined flags would arrive as one argument.
+    set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION}" "-DCMAKE_ENABLE_SCRIPTING=OFF")
   elseif(OS_MACOS)
     set(_cmake_generator "Xcode")
+    set(_obs_cmake_version "3.0.0")
+    set(_obs_dependency_component "Development")
     set(_cmake_arch "-DCMAKE_OSX_ARCHITECTURES:STRING='arm64;x86_64'")
     set(_cmake_extra "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    # OBS 30 derives the SDK version from CMAKE_OSX_SYSROOT, but the Xcode
+    # generator only passes the SDK name on, so hand OBS the full SDK path.
+    execute_process(
+      COMMAND xcrun --sdk macosx --show-sdk-path
+      OUTPUT_VARIABLE _macos_sdk_path
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE _macos_sdk_result
+    )
+    if(_macos_sdk_result EQUAL 0 AND _macos_sdk_path)
+      list(APPEND _cmake_extra "-DCMAKE_OSX_SYSROOT:STRING=${_macos_sdk_path}")
+    endif()
   endif()
 
   message(STATUS "Configure ${label} (${arch})")
@@ -67,7 +94,8 @@ function(_setup_obs_studio)
     COMMAND
       "${CMAKE_COMMAND}" -S "${dependencies_dir}/${_obs_destination}" -B
       "${dependencies_dir}/${_obs_destination}/build_${arch}" -G ${_cmake_generator} "${_cmake_arch}"
-      -DOBS_CMAKE_VERSION:STRING=3.0.0 -DENABLE_PLUGINS:BOOL=OFF -DENABLE_FRONTEND:BOOL=OFF
+      -DOBS_CMAKE_VERSION:STRING=${_obs_cmake_version} -DENABLE_PLUGINS:BOOL=OFF -DENABLE_FRONTEND:BOOL=OFF
+      -DENABLE_UI:BOOL=OFF -DENABLE_BROWSER:BOOL=OFF -DCMAKE_COMPILE_WARNING_AS_ERROR:BOOL=OFF
       -DOBS_VERSION_OVERRIDE:STRING=${_obs_version} "-DCMAKE_PREFIX_PATH='${CMAKE_PREFIX_PATH}'" ${_is_fresh}
       ${_cmake_extra}
     RESULT_VARIABLE _process_result
@@ -99,7 +127,8 @@ function(_setup_obs_studio)
   message(STATUS "Install ${label} (${arch})")
   execute_process(
     COMMAND
-      "${CMAKE_COMMAND}" --install build_${arch} --component Development --config Debug --prefix "${dependencies_dir}"
+      "${CMAKE_COMMAND}" --install build_${arch} --component ${_obs_dependency_component} --config Debug --prefix
+      "${dependencies_dir}"
     WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
     RESULT_VARIABLE _process_result
     COMMAND_ERROR_IS_FATAL ANY
@@ -107,7 +136,8 @@ function(_setup_obs_studio)
   )
   execute_process(
     COMMAND
-      "${CMAKE_COMMAND}" --install build_${arch} --component Development --config Release --prefix "${dependencies_dir}"
+      "${CMAKE_COMMAND}" --install build_${arch} --component ${_obs_dependency_component} --config Release --prefix
+      "${dependencies_dir}"
     WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
     RESULT_VARIABLE _process_result
     COMMAND_ERROR_IS_FATAL ANY
@@ -129,6 +159,27 @@ function(_check_dependencies)
     string(JSON url GET ${data} baseUrl)
     string(JSON label GET ${data} label)
     string(JSON revision ERROR_VARIABLE error GET ${data} revision ${platform})
+
+    # A platform may need a newer OBS baseline when the OBS sources matching the
+    # oldest supported version cannot be built on it (see platformOverrides in
+    # buildspec.json). The override only replaces the version and archive hash of
+    # the current platform; URL and labels stay in the shared dependency entry.
+    string(
+      JSON
+      platform_override_version
+      ERROR_VARIABLE platform_override_error
+      GET ${buildspec}
+      platformOverrides
+      ${platform}
+      ${dependency}
+      version
+    )
+    if(NOT platform_override_error)
+      string(JSON platform_override_hash GET ${buildspec} platformOverrides ${platform} ${dependency} hash)
+      set(version ${platform_override_version})
+      set(hash ${platform_override_hash})
+      message(STATUS "Using ${label} ${version} for ${platform} (platform override)")
+    endif()
 
     message(STATUS "Setting up ${label} (${arch})")
 

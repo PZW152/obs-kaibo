@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "app/curl_transport.hpp"
 
+#include "app/worker.hpp"
+
 #include <curl/curl.h>
 
 #include <algorithm>
@@ -11,6 +13,14 @@
 
 namespace kaibo {
 namespace {
+
+int onProgress(void *, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+	// libcurl calls this at least once a second. Returning non-zero aborts the
+	// transfer, which is what makes worker::shutdown()/abortInFlight() finish quickly
+	// instead of waiting for the request's full timeout (OBS may be exiting).
+	return worker::cancelled() ? 1 : 0;
+}
 
 size_t onBody(char *data, size_t size, size_t count, void *user)
 {
@@ -88,6 +98,8 @@ HttpResponse CurlTransport::send(const HttpRequest &request)
 	curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, request.timeoutMs);
 	curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, (std::min)(6000L, request.timeoutMs));
 	curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+	curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+	curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, onProgress);
 	curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
 	curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 0L);
 #if LIBCURL_VERSION_NUM >= 0x075500

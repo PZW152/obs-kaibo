@@ -6,7 +6,7 @@
   <a href="https://github.com/PZW152/obs-kaibo/actions/workflows/tests.yaml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/PZW152/obs-kaibo/tests.yaml?branch=main&label=tests"></a>
   <a href="https://github.com/PZW152/obs-kaibo/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/PZW152/obs-kaibo/total?color=111214"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/PZW152/obs-kaibo?color=111214"></a>
-  <img alt="OBS 30+" src="https://img.shields.io/badge/OBS-30%2B-111214">
+  <img alt="OBS 29.1+" src="https://img.shields.io/badge/OBS-29.1%2B-111214">
 </p>
 
 <p align="center"><b>Go live on Bilibili from OBS in one click.</b><br>QR sign-in · title and area · automatic stream settings · dropped-stream alerts · 简体 / 繁體 / English</p>
@@ -19,17 +19,17 @@
 
 Kaibo is an OBS Studio dock. After signing in once, going live is one button: it syncs any edited title, area and room announcement to Bilibili, opens your live room, writes the RTMP server and key into OBS and (by default) starts streaming. Ending is one button too: it stops OBS streaming, closes the room and tells you how long you were live.
 
-Also: in-dock QR sign-in with scanned/expired states, area search with recents, title history, a clear status for every combination of room and OBS state (with the one action that fixes it), one-click restream after a drop, closing the room when OBS exits, restoring your previous stream settings after ending (for multi-platform streamers), the face-verification QR (with automatic retry) when Bilibili asks for it, hotkeys, dark/light themes that follow OBS, and Simplified Chinese / Traditional Chinese / English. On Windows the sign-in is encrypted with DPAPI.
+Also: in-dock QR sign-in with scanned/expired states, area search with recents, title history, go-live preflight (sign-in, room, area, title/announcement length, offline state), a clear status for every combination of room and OBS state (with the one action that fixes it; other platforms' streams are never touched), one-click restream after a drop, closing the room when OBS exits, restoring your previous stream settings after ending (only while OBS still targets Bilibili), the face-verification QR (with automatic retry) when Bilibili asks for it, a **Tools → put the panel on the full-height right side** action plus a full-height docks hint, hotkeys, dark/light themes that follow OBS, and Simplified Chinese / Traditional Chinese / English. On Windows the sign-in is encrypted with DPAPI.
 
 ## Install
 
-Requires **OBS Studio 30 or newer**.
+Supports **OBS Studio 29.1 and newer** (Windows; load-tested on 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.x). The macOS build needs OBS 31.1+; Linux and Flatpak match the OBS from the distro repository / runtime — see [docs/install.md](docs/install.md).
 
 - **Windows**: download `obs-kaibo-<version>-windows-x64-installer.exe` from [Releases](https://github.com/PZW152/obs-kaibo/releases/latest), close OBS and run it. It installs to `C:\ProgramData\obs-studio\plugins\obs-kaibo` (works for the Steam build of OBS too). Running a newer installer upgrades in place and keeps your settings.
 - **macOS**: install `obs-kaibo-<version>-macos-universal.pkg`.
 - **Linux**: `.deb` for Ubuntu/Debian; `.flatpak` for the Flatpak build of OBS.
 
-Open the dock from **Docks → Kaibo** or **Tools → Kaibo**.
+The dock shows up automatically after the first start; you can also open it from **Tools → Kaibo**. On a brand-new OBS install it may appear as a floating window on the very first launch — click **Tools → put the panel on the full-height right side** to dock it. To make it fill the whole right column, see [troubleshooting](docs/troubleshooting.md#想把面板放到最右侧占满整栏).
 
 ## Uninstall and data
 

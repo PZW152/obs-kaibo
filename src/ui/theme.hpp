@@ -30,7 +30,11 @@ public:
 	QFont monoFont(int pixelSize = 12) const;
 
 	// A 24px-grid stroke icon from data/icons, tinted with a token colour.
-	QIcon icon(const QString &name, const QString &token = QStringLiteral("ink-muted")) const;
+	// size is the logical edge in px; buttons ask for their own icon size so a
+	// 16px control does not get an 18px bitmap upscaled/downscaled.
+	QIcon icon(const QString &name, const QString &token = QStringLiteral("ink-muted"), int size = 18) const;
+	// Rasterised and cached per (icon, colour, size, devicePixelRatio); paint
+	// events may call this freely.
 	QPixmap pixmap(const QString &name, const QColor &color, int size, qreal dpr) const;
 
 	// Re-applies a dynamic property so the stylesheet picks it up.
@@ -44,6 +48,7 @@ private:
 	bool m_dark = true;
 	bool m_loaded = false;
 	mutable QHash<QString, QByteArray> m_iconSources;
+	mutable QHash<QString, QPixmap> m_pixmapCache;
 };
 
 } // namespace kaibo::ui

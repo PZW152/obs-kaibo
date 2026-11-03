@@ -5,11 +5,14 @@
 #include "vendor/qrcodegen/qrcodegen.hpp"
 
 #include <QAccessible>
+#include <QBoxLayout>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QResizeEvent>
 #include <QStyle>
 #include <QVBoxLayout>
 
@@ -51,7 +54,7 @@ QPushButton *iconButton(const QString &icon, const QString &tooltip, QWidget *pa
 	auto *b = new QPushButton(parent);
 	b->setProperty("kbVariant", QStringLiteral("icon"));
 	b->setProperty("kbIcon", icon);
-	b->setIcon(theme().icon(icon));
+	b->setIcon(theme().icon(icon, QStringLiteral("ink-muted"), 16));
 	b->setIconSize(QSize(16, 16));
 	b->setToolTip(tooltip);
 	b->setAccessibleName(tooltip);
@@ -75,7 +78,6 @@ QFrame *divider(QWidget *parent)
 }
 
 // ------------------------------------------------------------------ StatusPill
-
 StatusPill::StatusPill(QWidget *parent) : QWidget(parent)
 {
 	m_blink.setInterval(600);
@@ -83,7 +85,7 @@ StatusPill::StatusPill(QWidget *parent) : QWidget(parent)
 		m_blinkOn = !m_blinkOn;
 		update();
 	});
-	setAccessibleName(QStringLiteral("status"));
+	setAccessibleName(T("A11y.Status"));
 }
 
 void StatusPill::set(Tone tone, const QString &text)
@@ -93,13 +95,26 @@ void StatusPill::set(Tone tone, const QString &text)
 	m_tone = tone;
 	m_text = text;
 	m_blinkOn = true;
-	if (tone == Tone::Busy)
+	if (tone == Tone::Busy && m_active)
 		m_blink.start();
 	else
 		m_blink.stop();
 	setAccessibleDescription(text);
+	setToolTip(text);
 	updateGeometry();
 	update();
+}
+
+void StatusPill::setActive(bool active)
+{
+	m_active = active;
+	if (!m_active) {
+		m_blink.stop();
+		m_blinkOn = true;
+		update();
+	} else if (m_tone == Tone::Busy) {
+		m_blink.start();
+	}
 }
 
 QSize StatusPill::sizeHint() const
@@ -108,6 +123,13 @@ QSize StatusPill::sizeHint() const
 	f.setPixelSize(11);
 	f.setWeight(QFont::DemiBold);
 	return {QFontMetrics(f).horizontalAdvance(m_text) + 7 + 7 + 6 + 8 + 2, 22};
+}
+
+QSize StatusPill::minimumSizeHint() const
+{
+	// The pill is the first thing that gives way in a narrow header: elide it
+	// rather than let it force the dock wider than dock-min.
+	return {40, 22};
 }
 
 void StatusPill::paintEvent(QPaintEvent *)
@@ -161,24 +183,57 @@ void StatusPill::paintEvent(QPaintEvent *)
 	f.setWeight(QFont::DemiBold);
 	p.setFont(f);
 	p.setPen(fg);
-	p.drawText(QRectF(20, 0, width() - 26, height()), Qt::AlignVCenter | Qt::AlignLeft, m_text);
+	const int textWidth = std::max(0, width() - 26);
+	const QString shown = QFontMetrics(f).elidedText(m_text, Qt::ElideRight, textWidth);
+	p.drawText(QRectF(20, 0, textWidth, height()), Qt::AlignVCenter | Qt::AlignLeft, shown);
 }
 
 // ------------------------------------------------------------------ Avatar
-
 Avatar::Avatar(QWidget *parent) : QWidget(parent)
 {
-	setFixedSize(40, 40);
+	const int edge = theme().length("avatar", 40);
+	setFixedSize(edge, edge);
+}
+
+QSize Avatar::sizeHint() const
+{
+	const int edge = theme().length("avatar", 40);
+	return {edge, edge};
 }
 
 void Avatar::setImage(const QImage &image)
 {
+	// render() pushes the state image on every pass; the cache key makes a no-op
+	// change free instead of re-scaling the image on every keystroke.
+	if (image.cacheKey() == m_imageKey)
+		return;
+	m_imageKey = image.cacheKey();
 	m_image = image;
+	rebuildScaled();
 	update();
+}
+
+// Decoding is done once by the controller; scaling to the painted 35px disc is
+// done once here instead of on every repaint.
+void Avatar::rebuildScaled()
+{
+	m_scaled = QPixmap();
+	m_scaledDpr = 0;
+	if (m_image.isNull())
+		return;
+	const qreal dpr = devicePixelRatioF();
+	const int edge = qRound(35 * dpr);
+	m_scaled = QPixmap::fromImage(
+		m_image.scaled(edge, edge, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+	m_scaled.setDevicePixelRatio(dpr);
+	m_scaledDpr = dpr;
 }
 
 void Avatar::setName(const QString &name)
 {
+	if (name == m_name)
+		return;
+	m_name = name;
 	m_initial = name.isEmpty() ? QString() : name.left(1).toUpper();
 	setAccessibleName(name);
 	update();
@@ -201,14 +256,16 @@ void Avatar::paintEvent(QPaintEvent *)
 	p.setPen(QPen(theme().color("line"), 1));
 	p.setBrush(theme().color("brand-soft"));
 	p.drawEllipse(r);
-	if (!m_image.isNull()) {
+	if (!m_scaled.isNull() && qFuzzyCompare(m_scaledDpr, devicePixelRatioF())) {
 		QPainterPath clip;
 		clip.addEllipse(r.adjusted(1, 1, -1, -1));
 		p.save();
 		p.setClipPath(clip);
-		p.drawImage(r.adjusted(1, 1, -1, -1), m_image);
+		p.drawPixmap(QPointF(2.5, 2.5), m_scaled);
 		p.restore();
 	} else {
+		if (!m_image.isNull())
+			rebuildScaled(); // DPI changed since the last repaint
 		QFont f = font();
 		f.setPixelSize(15);
 		f.setWeight(QFont::DemiBold);
@@ -224,17 +281,28 @@ void Avatar::paintEvent(QPaintEvent *)
 }
 
 // ------------------------------------------------------------------ QrView
-
 QrView::QrView(QWidget *parent) : QWidget(parent)
 {
-	setFixedSize(184, 184);
+	const int edge = theme().length("qr", 184);
+	setFixedSize(edge, edge);
 	setCursor(Qt::PointingHandCursor);
 	setFocusPolicy(Qt::StrongFocus); // the code can be refreshed with the keyboard too
 	setAccessibleName(T("Login.QrAccessible"));
 }
 
+QSize QrView::sizeHint() const
+{
+	const int edge = theme().length("qr", 184);
+	return {edge, edge};
+}
+
 void QrView::setPayload(const QString &text)
 {
+	// render() may run on every controller change; encoding is only needed when the
+	// payload actually changes.
+	if (text == m_payload)
+		return;
+	m_payload = text;
 	m_modules.clear();
 	m_size = 0;
 	if (!text.isEmpty()) {
@@ -258,6 +326,7 @@ void QrView::setOverlay(Overlay overlay, const QString &text)
 {
 	m_overlay = overlay;
 	m_overlayText = text;
+	setAccessibleDescription(overlay == Overlay::None ? QString() : text);
 	update();
 }
 
@@ -350,14 +419,15 @@ void QrView::paintEvent(QPaintEvent *)
 }
 
 // ------------------------------------------------------------------ ToggleSwitch
-
 ToggleSwitch::ToggleSwitch(QWidget *parent) : QPushButton(parent)
 {
 	setCheckable(true);
 	setFixedSize(34, 20);
 	setCursor(Qt::PointingHandCursor);
 	setFocusPolicy(Qt::StrongFocus);
-	setStyleSheet(QStringLiteral("QPushButton{border:none;background:transparent;min-height:0;padding:0;}"));
+	// The chrome (transparent, borderless) comes from kaibo.qss like every other
+	// button; the switch paints its track and knob below.
+	setProperty("kbSwitch", true);
 }
 
 void ToggleSwitch::paintEvent(QPaintEvent *)
@@ -385,7 +455,6 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
 }
 
 // ------------------------------------------------------------------ Banner
-
 Banner::Banner(QWidget *parent) : QFrame(parent)
 {
 	auto *row = new QHBoxLayout(this);
@@ -396,26 +465,26 @@ Banner::Banner(QWidget *parent) : QFrame(parent)
 	row->addWidget(m_icon, 0, Qt::AlignTop);
 
 	auto *col = new QVBoxLayout();
-	col->setSpacing(8);
+	col->setSpacing(theme().length("space-2", 8));
 	m_text = new QLabel(this);
 	m_text->setWordWrap(true);
 	m_text->setTextInteractionFlags(Qt::TextSelectableByMouse);
 	col->addWidget(m_text);
-	auto *actions = new QHBoxLayout();
-	actions->setSpacing(8);
+	m_actions = new QBoxLayout(QBoxLayout::LeftToRight);
+	m_actions->setSpacing(theme().length("space-2", 8));
 	m_primary = button({}, "primary", this);
 	m_primary->setProperty("kbSize", QStringLiteral("sm"));
 	m_secondary = button({}, "ghost", this);
 	m_secondary->setProperty("kbSize", QStringLiteral("sm"));
-	actions->addWidget(m_primary);
-	actions->addWidget(m_secondary);
-	actions->addStretch();
-	col->addLayout(actions);
+	m_actions->addWidget(m_primary);
+	m_actions->addWidget(m_secondary);
+	m_actions->addStretch();
+	col->addLayout(m_actions);
 	row->addLayout(col, 1);
 
 	connect(m_primary, &QPushButton::clicked, this, &Banner::primaryClicked);
 	connect(m_secondary, &QPushButton::clicked, this, &Banner::secondaryClicked);
-	setAccessibleName(QStringLiteral("banner"));
+	setAccessibleName(T("A11y.Banner"));
 	hide();
 }
 
@@ -435,6 +504,7 @@ void Banner::present(Tone tone, const QString &icon, const QString &text, const 
 	m_secondary->setVisible(!secondary.isEmpty());
 	setAccessibleDescription(text);
 	refreshIcon();
+	updateActionDirection();
 	QFrame::show();
 }
 
@@ -444,11 +514,30 @@ void Banner::refreshIcon()
 	m_icon->setPixmap(theme().pixmap(m_iconName, theme().color(token), 16, devicePixelRatioF()));
 }
 
-// ------------------------------------------------------------------ Toast
+void Banner::resizeEvent(QResizeEvent *event)
+{
+	QFrame::resizeEvent(event);
+	updateActionDirection();
+}
 
+// At 280px (the dock minimum) two action buttons do not fit side by side; stacking
+// them keeps both labels readable instead of letting Qt clip them.
+void Banner::updateActionDirection()
+{
+	const int narrowWidth = theme().length("dock-min", 280) + theme().length("space-6", 24) * 2;
+	const QBoxLayout::Direction direction = width() < narrowWidth ? QBoxLayout::TopToBottom
+								      : QBoxLayout::LeftToRight;
+	if (m_actions->direction() == direction)
+		return;
+	m_actions->setDirection(direction);
+	m_actions->invalidate();
+}
+
+// ------------------------------------------------------------------ Toast
 Toast::Toast(QWidget *parent) : QFrame(parent)
 {
 	setObjectName(QStringLiteral("KbToast"));
+	setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
 	auto *row = new QHBoxLayout(this);
 	row->setContentsMargins(12, 10, 12, 10);
 	row->setSpacing(10);
@@ -468,21 +557,25 @@ Toast::Toast(QWidget *parent) : QFrame(parent)
 	hide();
 }
 
-void Toast::showMessage(int kind, const QString &text, const QString &detail)
+void Toast::showMessage(ToastKind kind, const QString &text, const QString &detail)
 {
-	// kind: 0 ok, 1 info, 2 error (LiveController::ToastKind)
-	const char *icon = kind == 0 ? "check" : kind == 2 ? "alert" : "info";
-	const char *token = kind == 0 ? "success" : kind == 2 ? "danger" : "info";
-	m_icon->setPixmap(theme().pixmap(icon, theme().color(token), 16, devicePixelRatioF()));
+	m_kind = kind;
 	m_text->setText(text);
 	m_detail->setText(detail);
 	m_detail->setVisible(!detail.isEmpty());
-	reposition();
-	QFrame::show();
-	raise();
-	m_hide.start(kind == 2 ? 8000 : 4000);
+	refreshIcon();
+	show();
+	m_hide.start(kind == ToastKind::Error ? 6000 : 4000);
 	QAccessibleEvent event(this, QAccessible::Alert);
 	QAccessible::updateAccessibility(&event);
+	emit visibilityChanged();
+}
+
+void Toast::refreshIcon()
+{
+	const char *icon = m_kind == ToastKind::Ok ? "check" : m_kind == ToastKind::Error ? "alert" : "info";
+	const char *token = m_kind == ToastKind::Ok ? "success" : m_kind == ToastKind::Error ? "danger" : "info";
+	m_icon->setPixmap(theme().pixmap(icon, theme().color(token), 16, devicePixelRatioF()));
 }
 
 void Toast::mousePressEvent(QMouseEvent *event)
@@ -491,15 +584,10 @@ void Toast::mousePressEvent(QMouseEvent *event)
 	QFrame::mousePressEvent(event);
 }
 
-void Toast::reposition()
+void Toast::hideEvent(QHideEvent *event)
 {
-	if (!parentWidget())
-		return;
-	const int margin = 12;
-	const int w = parentWidget()->width() - margin * 2;
-	setFixedWidth(std::max(160, w));
-	adjustSize();
-	move(margin, parentWidget()->height() - height() - margin);
+	QFrame::hideEvent(event);
+	emit visibilityChanged();
 }
 
 // ------------------------------------------------------------------ FlowLayout

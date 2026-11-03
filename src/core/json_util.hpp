@@ -4,6 +4,7 @@
 #include "vendor/json11/json11.hpp"
 
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -14,7 +15,19 @@ namespace kaibo {
 inline bool jsonInt(const json11::Json &value, int64_t &out)
 {
 	if (value.is_number()) {
-		out = static_cast<int64_t>(value.number_value());
+		// json11 stores every number as a double. Casting an out-of-range double to
+		// int64_t is undefined behaviour, and a huge or non-finite number is server
+		// data we cannot use anyway, so treat it as "not an int" instead.
+		const double number = value.number_value();
+		constexpr double kMin = -9223372036854775808.0; // -2^63, exactly representable
+		constexpr double kMax = 9223372036854775808.0;  // +2^63, one past INT64_MAX
+		if (!(number >= kMin && number < kMax))         // also false for NaN
+			return false;
+		// Ids, statuses and counts are whole numbers: a fractional value here is not
+		// something any caller can use, and truncating it silently would be wrong.
+		if (std::trunc(number) != number)
+			return false;
+		out = static_cast<int64_t>(number);
 		return true;
 	}
 	if (value.is_string()) {

@@ -44,14 +44,27 @@ std::string CookieJar::get(const std::string &name) const
 
 void CookieJar::set(const std::string &name, const std::string &value)
 {
-	auto it = std::find_if(m_items.begin(), m_items.end(), [&](const auto &item) { return item.first == name; });
+	// A cookie name is unique: a jar built from a header that listed the same name
+	// twice must not keep sending both values (last value wins, like a browser). The
+	// position of the first occurrence is kept so the header order stays stable.
+	size_t first = m_items.size();
+	for (size_t i = 0; i < m_items.size();) {
+		if (m_items[i].first != name) {
+			++i;
+		} else if (first == m_items.size()) {
+			first = i;
+			++i;
+		} else {
+			m_items.erase(m_items.begin() + static_cast<std::ptrdiff_t>(i));
+		}
+	}
 	if (value.empty() || value == "deleted") {
-		if (it != m_items.end())
-			m_items.erase(it);
+		if (first != m_items.size())
+			m_items.erase(m_items.begin() + static_cast<std::ptrdiff_t>(first));
 		return;
 	}
-	if (it != m_items.end())
-		it->second = value;
+	if (first != m_items.size())
+		m_items[first].second = value;
 	else
 		m_items.emplace_back(name, value);
 }

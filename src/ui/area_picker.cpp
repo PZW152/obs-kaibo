@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPushButton>
 #include <QScreen>
 #include <QVBoxLayout>
 
@@ -32,7 +33,8 @@ AreaPicker::AreaPicker(QWidget *parent) : QFrame(parent, Qt::Popup)
 	m_search = new QLineEdit(this);
 	m_search->setPlaceholderText(T("Area.Search"));
 	m_search->setClearButtonEnabled(true);
-	m_search->addAction(Theme::instance().icon(QStringLiteral("search")), QLineEdit::LeadingPosition);
+	m_search->addAction(Theme::instance().icon(QStringLiteral("search"), QStringLiteral("ink-muted"), 16),
+			    QLineEdit::LeadingPosition);
 	m_search->setAccessibleName(T("Area.Search"));
 	m_search->installEventFilter(this);
 	col->addWidget(m_search);
@@ -56,13 +58,23 @@ AreaPicker::AreaPicker(QWidget *parent) : QFrame(parent, Qt::Popup)
 	m_empty->setMinimumHeight(120);
 	col->addWidget(m_empty);
 
+	m_retry = new QPushButton(T("Loading.Retry"), this);
+	m_retry->setProperty("kbSize", QStringLiteral("sm"));
+	m_retry->setCursor(Qt::PointingHandCursor);
+	connect(m_retry, &QPushButton::clicked, this, &AreaPicker::retryRequested);
+	col->addWidget(m_retry, 0, Qt::AlignHCenter);
+
 	connect(m_search, &QLineEdit::textChanged, this, &AreaPicker::rebuildList);
 	connect(m_list, &QListWidget::itemActivated, this, [this](QListWidgetItem *item) {
+		if (!(item->flags() & Qt::ItemIsSelectable))
+			return; // "needs approval" areas are shown but cannot be chosen
 		const int id = item->data(kAreaRole).toInt();
 		if (id > 0)
 			choose(id);
 	});
 	connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
+		if (!(item->flags() & Qt::ItemIsSelectable))
+			return;
 		const int id = item->data(kAreaRole).toInt();
 		if (id > 0)
 			choose(id);
@@ -106,6 +118,23 @@ void AreaPicker::updateData(const std::vector<AreaGroup> &groups, const std::vec
 	adjustSize();
 }
 
+bool AreaPicker::needsUpdate(const std::vector<AreaGroup> &groups, const std::vector<int> &recent, int current,
+			     bool loading) const
+{
+	return loading != m_loading || current != m_current || recent != m_recent || groups.size() != m_groups.size() ||
+	       groups.empty() != m_groups.empty();
+}
+
+void AreaPicker::refreshTheme()
+{
+	setStyleSheet(Theme::instance().styleSheet());
+	if (!isVisible())
+		return;
+	rebuildRecent();
+	rebuildList();
+	update();
+}
+
 void AreaPicker::rebuildRecent()
 {
 	while (QLayoutItem *item = m_recentFlow->takeAt(0)) {
@@ -115,9 +144,10 @@ void AreaPicker::rebuildRecent()
 	int shown = 0;
 	for (int id : m_recent) {
 		const Area *area = findArea(m_groups, id);
-		if (!area)
+		if (!area || area->locked)
 			continue;
 		auto *chip = new QPushButton(qs(area->name), m_recentBox);
+		chip->setProperty("kbVariant", QStringLiteral("chip"));
 		chip->setProperty("kbOn", id == m_current);
 		chip->setCursor(Qt::PointingHandCursor);
 		connect(chip, &QPushButton::clicked, this, [this, id] { choose(id); });
@@ -135,6 +165,7 @@ void AreaPicker::rebuildList()
 	const auto results = searchAreas(m_groups, ss(query));
 	QListWidgetItem *selected = nullptr;
 	const QColor muted = Theme::instance().color(QStringLiteral("ink-muted"));
+	const QColor faint = Theme::instance().color(QStringLiteral("ink-faint"));
 	for (const auto &group : results) {
 		auto *header = new QListWidgetItem(qs(group.name), m_list);
 		header->setFlags(Qt::NoItemFlags);
@@ -150,8 +181,14 @@ void AreaPicker::rebuildList()
 			auto *item = new QListWidgetItem(text, m_list);
 			item->setData(kAreaRole, area.id);
 			item->setToolTip(area.locked ? T("Area.LockedHint") : qs(group.name + " › " + area.name));
-			if (area.id == m_current)
+			if (area.locked) {
+				// Bilibili would reject this area at go-live, so it must not look
+				// (or behave) like something the person can pick. The tooltip stays.
+				item->setFlags(Qt::NoItemFlags);
+				item->setForeground(faint);
+			} else if (area.id == m_current) {
 				selected = item;
+			}
 		}
 	}
 	if (selected) {
@@ -162,6 +199,9 @@ void AreaPicker::rebuildList()
 	const bool empty = m_list->count() == 0;
 	m_list->setVisible(!empty);
 	m_empty->setVisible(empty);
+	// A failed load keeps a visible retry action instead of asking the person to
+	// close and reopen the picker.
+	m_retry->setVisible(empty && !m_loading && m_groups.empty());
 	if (empty)
 		m_empty->setText(m_loading          ? T("Area.Loading")
 				 : m_groups.empty() ? T("Area.Unavailable")

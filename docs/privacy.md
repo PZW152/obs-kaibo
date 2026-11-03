@@ -19,6 +19,8 @@ Kaibo 只在一个文件夹里保存自己的数据，不写注册表、不装�
 | `settings.json`（及 `.bak`） | 选项、最近使用的分区和标题 |
 | `credentials.bin`（及 `.bak`） | B 站登录 Cookie（SESSDATA、bili_jct 等）以及 B 站分配的设备标识（buvid3、buvid4、b_nut） |
 | `service-backup.bin`（及 `.bak`，仅开启「关播后恢复原来的推流设置」时） | 被替换的那套 OBS 推流设置（可能包含其他平台的推流码），和登录凭证用同一套保护 |
+| `ui-hints.ini` | 只记录界面提示是否已被关闭（例如「全高度停靠窗口」提示），不含任何账号信息 |
+| `.dock-first-run` | 空标记文件，只用来判断是不是新安装后的第一次启动（决定要不要自动把面板放到右侧）；不含任何数据 |
 
 - **Windows**：`credentials.bin` 与 `service-backup.bin` 用 Windows DPAPI 加密，只有同一台电脑上的同一个 Windows 账号能解密。
 - **macOS / Linux**：两个文件都以 `0600` 权限保存（只有你的系统账号可读），未额外加密。

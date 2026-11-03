@@ -6,6 +6,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QLayout>
+#include <QPixmap>
 #include <QPushButton>
 #include <QString>
 #include <QTimer>
@@ -13,11 +14,16 @@
 
 #include <vector>
 
+class QBoxLayout;
 class QHBoxLayout;
 class QKeyEvent;
 class QVBoxLayout;
 
 namespace kaibo::ui {
+
+// Toast severities. Kept separate from LiveController::ToastKind so widgets do not
+// need to know about the controller; the dock maps one to the other.
+enum class ToastKind { Ok, Info, Error };
 
 // StatusPill: dot + word. Colour never carries the state alone.
 class StatusPill : public QWidget {
@@ -26,7 +32,10 @@ public:
 	enum class Tone { Neutral, Busy, Live, Warn, Ok };
 	explicit StatusPill(QWidget *parent = nullptr);
 	void set(Tone tone, const QString &text);
+	// Stops the busy blink while the dock is hidden; set() restarts it if needed.
+	void setActive(bool active);
 	QSize sizeHint() const override;
+	QSize minimumSizeHint() const override;
 
 protected:
 	void paintEvent(QPaintEvent *) override;
@@ -36,6 +45,7 @@ private:
 	QString m_text;
 	QTimer m_blink;
 	bool m_blinkOn = true;
+	bool m_active = true;
 };
 
 // Round avatar with initials fallback and an optional live lamp.
@@ -46,13 +56,19 @@ public:
 	void setImage(const QImage &image);
 	void setName(const QString &name);
 	void setLive(bool live);
-	QSize sizeHint() const override { return {40, 40}; }
+	QSize sizeHint() const override;
 
 protected:
 	void paintEvent(QPaintEvent *) override;
 
 private:
+	void rebuildScaled();
+
 	QImage m_image;
+	QPixmap m_scaled;
+	qint64 m_imageKey = 0;
+	qreal m_scaledDpr = 0;
+	QString m_name;
 	QString m_initial;
 	bool m_live = false;
 };
@@ -65,7 +81,7 @@ public:
 	explicit QrView(QWidget *parent = nullptr);
 	void setPayload(const QString &text);
 	void setOverlay(Overlay overlay, const QString &text = {});
-	QSize sizeHint() const override { return {184, 184}; }
+	QSize sizeHint() const override;
 
 signals:
 	void clicked();
@@ -80,6 +96,7 @@ private:
 	int m_size = 0;
 	Overlay m_overlay = Overlay::Loading;
 	QString m_overlayText;
+	QString m_payload;
 };
 
 // Switch (role: check box) for settings rows.
@@ -93,7 +110,8 @@ protected:
 	void paintEvent(QPaintEvent *) override;
 };
 
-// Inline banner with icon, text and up to two actions.
+// Inline banner with icon, text and up to two actions. The action row stacks
+// vertically when the dock is narrow so neither button label is ever clipped.
 class Banner : public QFrame {
 	Q_OBJECT
 public:
@@ -107,27 +125,39 @@ signals:
 	void primaryClicked();
 	void secondaryClicked();
 
+protected:
+	void resizeEvent(QResizeEvent *event) override;
+
 private:
+	void updateActionDirection();
+
 	Tone m_tone = Tone::Info;
 	QString m_iconName;
 	QLabel *m_icon;
 	QLabel *m_text;
+	QBoxLayout *m_actions;
 	QPushButton *m_primary;
 	QPushButton *m_secondary;
 };
 
-// Toast pinned to the bottom of the dock.
+// Transient message row. It is a normal row under the scrolling content (not an
+// overlay), so it never covers a control and never swallows a click meant for one.
 class Toast : public QFrame {
 	Q_OBJECT
 public:
 	explicit Toast(QWidget *parent);
-	void showMessage(int kind, const QString &text, const QString &detail);
-	void reposition();
+	void showMessage(ToastKind kind, const QString &text, const QString &detail = {});
+	void refreshIcon();
+
+signals:
+	void visibilityChanged();
 
 protected:
 	void mousePressEvent(QMouseEvent *event) override;
+	void hideEvent(QHideEvent *event) override;
 
 private:
+	ToastKind m_kind = ToastKind::Info;
 	QLabel *m_icon;
 	QLabel *m_text;
 	QLabel *m_detail;

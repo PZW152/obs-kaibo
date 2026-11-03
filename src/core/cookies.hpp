@@ -22,7 +22,9 @@ public:
 	bool empty() const { return m_items.empty(); }
 	void clear() { m_items.clear(); }
 
-	// The three cookies a signed-in web session is made of.
+	// The cookies a signed-in web session needs (SESSDATA + bili_jct). DedeUserID is not
+	// required: it can be filled in from the profile (BiliClient::fetchProfile) and the
+	// session stays valid without it, so requiring it would sign out old saved jars.
 	bool hasSession() const { return !get("SESSDATA").empty() && !get("bili_jct").empty(); }
 	std::string csrf() const { return get("bili_jct"); }
 	std::string uid() const { return get("DedeUserID"); }

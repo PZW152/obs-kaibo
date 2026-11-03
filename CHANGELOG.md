@@ -1,69 +1,46 @@
 # Changelog
 
-## 1.0.3 — 2026-10-25
+## 1.1.0 — 2026-11-03
 
-### Fixed
-- The replaced OBS stream service (which can contain another platform's stream key) is now sealed in `service-backup.bin` with the same protection as the sign-in and is no longer written to `settings.json`; a 1.0.2 plaintext backup is migrated on the first start.
-- Atomic writes are flushed to disk before the rename, so a power loss cannot publish a partial settings/credentials file.
-- The Windows installer falls back to `tasklist` when WMI is unavailable, so it still refuses to overwrite a DLL OBS has loaded.
-- A JSON answer without a `code` field is no longer mistaken for success: that could sign the person out (the profile call read "not logged in") or report a live room as closed.
-- HTTP 412 (Bilibili's risk-control answer) now shows Bilibili's own code and message instead of a bare "HTTP 412".
-- Counts no longer round across a unit boundary ("1000K" is now "1M", "10000万" is now "1亿").
-- Timestamps with impossible dates (e.g. 2026-02-31) are rejected instead of producing a wrong live duration.
-- The replaced OBS stream service is captured fresh on every go-live; a backup left over from a crash can no longer overwrite the service the person configured since then and then restore the stale one at end-of-live.
-- The captured service is no longer thrown away when the "restore previous stream settings" option is toggled while a broadcast is running.
-- Closing OBS during a broadcast now restores the previous stream settings too (the option used to be silently skipped on that path).
-- If Windows DPAPI cannot encrypt the sign-in, saving it now fails instead of silently writing the cookies to disk as plaintext.
-- "Delete all Kaibo data" warns that the room is still live and that OBS may keep streaming.
-- Failing to register the dock now stops the worker thread instead of leaking it.
-- Going live no longer stalls on face verification: after the code is scanned, Kaibo waits and retries the start on its own (1/2/4/8/8 s) instead of immediately showing a fresh code, and says plainly when the requirement is Bilibili's per-account/area policy rather than something the plugin can skip.
-- Start-live requests now carry Bilibili's device identity (`buvid3`/`buvid4`, fetched once and kept), sign with millisecond timestamps and no longer claim to come from the web live centre while also using the live-companion app key — the request identity is internally consistent again.
-- `Set-Cookie` from API responses is now stored (only the QR sign-in step used to do that), so session and device cookies no longer drift away from what Bilibili handed out.
-- The saved sign-in stores the cookies as they are after the request instead of the copy from before it.
-- The face-verification prompt also accepts Bilibili's alternative `qrcode`/`url` answer fields and falls back to the verification page instead of a generic "could not start live" error.
+### Compatibility
 
-### Changed
-- Face verification is an in-dock card instead of an application-modal dialog: it no longer freezes OBS and can no longer stack into a nested loop of prompts.
-- The Go Live button is really disabled while a start/stop/sync is running (it used to look active and swallow clicks); syncing shows "Saving…" in the status pill.
-- Destructive confirmations (end broadcast, delete all data) keep the destructive choice off the Enter key.
-- Long values (account name, room, data folder) wrap or get a tooltip in a narrow dock.
-- Control sizes in the dock stylesheet come from the design tokens.
+- **Windows 现在支持 OBS Studio 29.1 及以上**：产物改以 OBS 30.0.2 + Qt 6.5.3 为构建基线，向前兼容到 OBS 33.x（1.0.3 实际只能在 31.1+ 载入，OBS 29/30 会直接「Module not loaded」）。
+  Windows now supports OBS Studio 29.1 and newer: the Windows build is pinned to OBS 30.0.2 + Qt 6.5.3 and runs on OBS 29.1 – 33.x (1.0.3 could only load on 31.1+).
+- **dock 注册不再静态链接**：OBS 28/29 用 `obs_frontend_add_dock`，30+ 用 `obs_frontend_add_custom_qdock`（回退 `add_dock_by_id`），全部在运行时解析。`obs_frontend_add_dock` 从 OBS 32 起已被移除，静态导入是此前跨版本载入失败的根因之一。
+- macOS 继续以 OBS 31.1.1 + Qt 6.8 为基线（受 Xcode 版本限制），支持 OBS 31.1+。
+- Windows 安装程序、便携版路径、数据目录与插件 id 均不变，升级不会影响 1.0.x 的设置与登录。
 
 ### Added
-- Unit tests for the device-identity bootstrap and persistence, `Set-Cookie` absorption, the millisecond `ts` and client identity headers, the 60024 answer-field fallback, the face-verification retry schedule, missing envelopes, HTTP 412 risk control, count-unit boundaries, impossible dates and `0600` temp files.
 
-## 1.0.2 — 2026-10-20
-
-1.0.1 was tagged but never published; its fixes (below) ship in this release.
-
-### Fixed
-- Windows installer: running it while OBS was open failed with "Runtime error … Cannot call "UninstallSilent" function during Setup" instead of asking you to close OBS ([#2](https://github.com/PZW152/obs-kaibo/issues/2)). The uninstaller had the matching problem with `WizardSilent`.
-
-## 1.0.1 — 2026-10-20 (not published)
+- **开播前检查**：开播前检查登录是否有效、直播间是否存在、分区（含「需申请」）、标题/公告长度、是否离线；能提前说清的问题会在开播前给出本地化原因，阻塞项阻止开播，警告只提示。
+- **面板放到右侧全高**：新增「工具 → 将面板放到右侧全高」。OBS 33 起面板默认停靠在右侧；该菜单项会在需要时把面板回到右侧并开启 OBS 的「全高度停靠窗口」，解决「面板不能顶天 / 右侧不能占满整列」的问题。
+- **OBS 33 全高度提示**：首次检测到 OBS 支持「全高度停靠窗口」但未开启时，面板内会出现一次性提示（可关闭，记住选择）。
+- **首次安装自动显示面板**：新装用户启动 OBS 后 Kaibo 面板会自动显示，不再只存在于工具菜单里（全新安装的 OBS 首次启动时可能以浮动窗口出现，用「工具 → 将面板放到右侧全高」一键归位；之后会记住布局）。
+- **诊断日志**：`[obs-kaibo]` 日志覆盖关键状态变化与失败请求（操作、接口、错误类别、B 站错误码/HTTP 状态、B 站原文），不含 Cookie、令牌、推流码或完整 URL。
 
 ### Fixed
-- Windows: the saved sign-in was sometimes rejected on the next OBS start ("stored sign-in could not be decrypted"), signing you out. The DPAPI entropy pointed at freed memory.
-- The account card on the main page was stretched to the height of the settings page, leaving a large empty gap.
-- In a narrow dock, a long account name pushed the account card's buttons out of view.
-- The data folder in Settings is shown with native path separators.
 
-## 1.0.0 — 2026-10-20
-
-First release of Kaibo, a rewrite of obs-bilibili-stream 2.1.5.
-
-### New
-- Dock panel replaces the menu-and-dialog interface: QR sign-in inside the dock, account card with avatar and stats, room card, one Go Live button with live timer.
-- One-click go live: syncs title / area / announcement, opens the room, writes the stream settings into OBS and starts streaming (optional).
-- One-click end: stops OBS streaming and closes the room, with the broadcast duration.
-- Status for every room × OBS combination, with the one action that fixes it; dropped streams never close the room.
-- Area picker with search and recent areas; title history; room announcement editing.
-- Optional: close the room when OBS exits, close it when you stop streaming in OBS, restore previous stream settings after ending.
-- Face-verification QR inside OBS when Bilibili requires it.
-- Hotkeys: “Kaibo: Go live”, “Kaibo: End live”.
-- Simplified Chinese, Traditional Chinese and English; dark and light themes following OBS.
-- Sign-in encrypted with Windows DPAPI; “Delete all Kaibo data” in settings; one-click import of the old plugin's sign-in.
-- Windows installer with in-place upgrades and an uninstaller that keeps data unless you ask to delete it.
+- 退出 OBS 时能可靠关闭直播间（此前关闭请求可能被工作线程的取消标记误取消）。
+- 推流连接中（STARTING–STARTED 窗口）点「结束直播」会真正停掉 OBS 输出，不再出现房间已关但 OBS 继续推流。
+- 关闭 OBS、重启后状态恢复：开播前检查/推流目标改为实时读取 OBS，重启后「开始推流」一键可用；「开播后自动推流」关闭时也不会再出现按钮点两次才生效。
+- 只对真正的 B 站推流目标执行结束/关播：OBS 正在推其他平台时，断流提示、结束直播、自动关播都不会误伤。
+- 推流设置的备份先加密落盘、确认成功后才改写 OBS；关播恢复只会在当前推流目标仍是 B 站时执行；旧版明文备份迁移在密封失败时不再删除原文件。
+- 响应解析健壮性：缺少 `code` 字段、缺少 `isLogin`、缺少 `live_status`、布尔型 code、超大/小数/NaN 数字都不再被误判为登出/关播/成功。
+- 二维码登录与轮询的竞态（隐藏面板、二维码过期后仍会重启轮询），以及普通请求轮换的 Cookie 未持久化。
+- 分区「需申请」不再基于过期缓存硬性阻止开播；B 站推流地址按主机名边界匹配，不再把相似域名当成 B 站。
+- 面板性能：输入标题、后台刷新、面板隐藏时不再反复重建界面；图标/二维码/头像/主题位图都有缓存，计时器只在需要时运行。
+- 面板界面/易用性（1.0.3 审查遗留项）：提示条不再遮挡内容、窄面板省略显示 + tooltip、横幅与按钮在 280px 下不溢出、键盘与读屏、错误/离线/公告不可用状态、设计 token 一致化、三语文案与「B 站/哔哩哔哩」命名统一。
 
 ### Changed
-- New name, logo, plugin id (`obs-kaibo`), Flatpak id (`com.obsproject.Studio.Plugin.Kaibo`) and data folder (`plugin_config/obs-kaibo`).
-- Network code rewritten: HTTPS only, every request off the UI thread, form values URL-encoded, Bilibili errors shown with their code.
+
+- 设计系统新增 `tools/check-theme.py`（CI 检查硬编码颜色与 QSS token），语言文件继续由 `tools/check-locales.py` 检查。
+- OBS 33 的停靠布局说明与兼容矩阵写入 `docs/install.md`、`docs/troubleshooting.md`。
+- 1.0.3 的「结束直播」会立刻关闭房间，现在会等 OBS 推流真正停止后再关，避免观众端还有延迟缓冲时直接断掉。
+
+### Verified
+
+- 单元测试：39 tests / 430 checks（Windows / macOS / Ubuntu CI 全绿），新增取消作用域、推流地址主机名匹配、响应解析边界、Cookie/设备标识、会话代次等回归。
+- CI 构建与打包（Windows 安装程序 + zip、macOS pkg、Ubuntu deb、Flatpak）全部通过；格式检查、语言检查、设计 token 检查通过。
+- Windows 实测载入矩阵：OBS 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.0 / 33.0.1 均显示 `[obs-kaibo] loaded` + `started`，并按版本分别使用 `obs_frontend_add_dock`（29）与 `obs_frontend_add_custom_qdock`（30+）。
+
+## 1.0.3 — 2026-10-25

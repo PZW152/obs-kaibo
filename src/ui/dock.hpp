@@ -4,8 +4,10 @@
 #include <QTimer>
 #include <QWidget>
 
+class QAction;
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QPlainTextEdit;
 class QPushButton;
 class QScrollArea;
@@ -49,24 +51,56 @@ private:
 	QWidget *buildSettingsPage();
 	QWidget *buildFaceAuthCard();
 
+	void scheduleRender();
 	void render();
 	void renderQr();
 	void renderBanner();
 	void renderFaceAuth();
 	void renderGoLive();
 	void renderClock();
+	void updateElidedTexts();
+	// OBS 33: tell the person how to make this panel fill the whole right column.
+	void updateLayoutHint();
+	void dismissLayoutHint();
+	void loadLayoutHintDismissed();
+	QAction *sideDocksAction();
 	void applyTheme();
 	void openAreaPicker();
 	void showTitleHistory();
 	void showAccountMenu();
+	void execMenuAt(QMenu &menu, QWidget *anchor);
 	void confirmDeleteData();
-	void copyText(const QString &text);
+	void copyText(const QString &text, const QString &what);
 	void readOptions();
 	void setSettingsOpen(bool open);
 
 	LiveController *m_controller;
 	bool m_settingsOpen = false;
 	bool m_rendering = false;
+	bool m_newsExpanded = false;
+
+	// Coalesces bursts of controller changed() (every title keystroke) into one pass.
+	QTimer m_renderTimer;
+	// Re-elides the text labels once a resize settled.
+	QTimer m_elideTimer;
+	QTimer m_clockTimer;
+	qint64 m_lastRefreshMs = 0;
+
+	// Last-applied banner/button states, so render() does not re-wire or re-rasterise
+	// anything that did not change.
+	QString m_bannerKey;
+	QString m_loginBannerKey;
+	QString m_goLiveIconKey;
+
+	// Full (unelided) text of the labels that can be wider than the dock.
+	QString m_nameFull;
+	QString m_roomLabelFull;
+	QString m_dataPathFull;
+	QString m_areaFull;
+	bool m_hintDismissed = false;
+	bool m_hintDismissLoaded = false;
+	QAction *m_sideDocksAction = nullptr;
+	int m_hintRetries = 0; // OBS may build its dock menu after the panel appears
 
 	// header
 	QLabel *m_logo = nullptr;
@@ -74,6 +108,8 @@ private:
 	QPushButton *m_settingsButton = nullptr;
 	QPushButton *m_backButton = nullptr;
 
+	QWidget *m_hintWrap = nullptr;
+	Banner *m_hintBanner = nullptr;
 	QScrollArea *m_scroll = nullptr;
 	QWidget *m_loadingPage = nullptr;
 	QWidget *m_loginPage = nullptr;
@@ -81,6 +117,7 @@ private:
 	QWidget *m_settingsPage = nullptr;
 
 	// login
+	Banner *m_loginBanner = nullptr;
 	Banner *m_legacyBanner = nullptr;
 	QrView *m_qr = nullptr;
 	QLabel *m_qrTitle = nullptr;
@@ -91,17 +128,22 @@ private:
 	Avatar *m_avatar = nullptr;
 	QLabel *m_name = nullptr;
 	QLabel *m_roomLabel = nullptr;
+	QPushButton *m_moreButton = nullptr;
 	QWidget *m_stats = nullptr;
 	QLabel *m_online = nullptr;
 	QLabel *m_followers = nullptr;
 	QLineEdit *m_title = nullptr;
 	QLabel *m_titleCounter = nullptr;
 	QLabel *m_titleError = nullptr;
+	QPushButton *m_titleHistoryButton = nullptr;
 	QPushButton *m_areaButton = nullptr;
 	QLabel *m_areaText = nullptr;
+	QLabel *m_areaHint = nullptr;
 	QPushButton *m_newsToggle = nullptr;
 	QPlainTextEdit *m_news = nullptr;
 	QLabel *m_newsCounter = nullptr;
+	QLabel *m_newsError = nullptr;
+	QLabel *m_newsHint = nullptr;
 	QLabel *m_syncHint = nullptr;
 	QPushButton *m_sync = nullptr;
 	QWidget *m_clockRow = nullptr;
@@ -133,9 +175,11 @@ private:
 	QPushButton *m_signOut = nullptr;
 	QLabel *m_dataPath = nullptr;
 
+	// Transient rows live in the dock's vertical layout, under the scrolling content,
+	// so a toast never paints over a control or eats a click meant for one.
+	QWidget *m_toastWrap = nullptr;
 	AreaPicker *m_picker = nullptr;
 	Toast *m_toast = nullptr;
-	QTimer m_clockTimer;
 };
 
 } // namespace kaibo::ui
