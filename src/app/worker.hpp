@@ -17,14 +17,17 @@ void start();
 // after this returns no job can still be running or post anything. Idempotent.
 void shutdown();
 
-// True once shutdown() has begun. Jobs use it to stop early; it also makes the HTTP
-// transport abort an in-flight transfer so shutdown() does not wait for a timeout.
+// True once shutdown() has begun. Jobs use it to stop early and never post to the UI;
+// it is process-wide state, unlike cancelled().
 bool shuttingDown();
-// Asks the transport to abort the current request (waitIdle() below stays useful);
-// used on OBS exit, where the controller must still close the room synchronously.
+// Asks the transport to abort the request currently running on the worker thread
+// (waitIdle() below stays useful); used on OBS exit, where the controller must still
+// close the room synchronously.
 void abortInFlight();
 // True when the in-flight request should give up: shutdown() or abortInFlight() was
-// called. The HTTP transport checks this from libcurl's progress callback.
+// called. Deliberately scoped to the worker thread: a synchronous request made by the
+// UI thread during exit (the final room close) must not be aborted. The HTTP transport
+// checks this from libcurl's progress callback.
 bool cancelled();
 // Waits until no job is running and none is queued; false when the timeout expired.
 bool waitIdle(int timeoutMs);

@@ -104,14 +104,35 @@ bool streamingActive()
 
 void startStreaming()
 {
-	if (!obs_frontend_streaming_active())
-		obs_frontend_streaming_start();
+	if (obs_frontend_streaming_active())
+		return;
+	// Between STREAMING_STARTING and STREAMING_STARTED the frontend says "not active"
+	// although the output is already connecting; starting again would restart or be
+	// ignored. Check the output itself.
+	obs_output_t *output = obs_frontend_get_streaming_output();
+	if (output) {
+		const bool busy = obs_output_active(output);
+		obs_output_release(output);
+		if (busy)
+			return;
+	}
+	obs_frontend_streaming_start();
 }
 
 void stopStreaming()
 {
-	if (obs_frontend_streaming_active())
+	if (obs_frontend_streaming_active()) {
 		obs_frontend_streaming_stop();
+		return;
+	}
+	// Same window: the frontend refuses to stop a stream that is still connecting
+	// (obs_frontend_streaming_stop() only acts on an active stream), so the output would
+	// finish connecting and push with the old key. Force the output itself.
+	obs_output_t *output = obs_frontend_get_streaming_output();
+	if (!output)
+		return;
+	obs_output_force_stop(output);
+	obs_output_release(output);
 }
 
 void OutputWatcher::attach()

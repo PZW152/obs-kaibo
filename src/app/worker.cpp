@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "app/worker.hpp"
 
+#include "core/cancel_scope.hpp"
+
 #include <obs-module.h>
 #include <plugin-support.h>
 
@@ -26,7 +28,9 @@ std::deque<std::function<void()>> g_queue;
 bool g_active = false; // a job is running right now
 std::thread g_thread;
 std::atomic<bool> g_stopping{false};
-std::atomic<bool> g_abort{false};
+// Only the worker thread observes this cancellation: the UI thread's synchronous room
+// close during exit must not be aborted when the worker's request is.
+CancelScope g_cancel;
 
 // QMetaObject::invokeMethod(context, functor) needs a Qt symbol the Qt builds in
 // obs-deps do not export, so completed jobs travel as posted events instead.
@@ -89,6 +93,7 @@ bool idleLocked()
 
 void loop()
 {
+	g_cancel.attachToCurrentThread();
 	for (;;) {
 		std::function<void()> job;
 		{
@@ -126,7 +131,7 @@ void start()
 	if (g_thread.joinable())
 		return;
 	g_stopping = false;
-	g_abort = false;
+	g_cancel.reset();
 	g_active = false;
 	g_thread = std::thread(loop);
 }
@@ -136,14 +141,25 @@ void shutdown()
 	{
 		std::lock_guard<std::mutex> lock(g_mutex);
 		g_stopping = true;
-		g_abort = true; // make an in-flight transfer abort instead of timing out
+		g_cancel.request(); // make an in-flight transfer abort instead of timing out
 		g_queue.clear();
 	}
 	g_cv.notify_all();
 	// Join rather than detach: once this returns no background job can still run plugin
 	// code, log, or post a Qt event while OBS tears the module down. The transport
-	// watches shuttingDown() through libcurl's progress callback, so a request in
-	// flight gives up quickly instead of holding the exit for its full timeout.
+	// watches cancelled() through libcurl's progress callback, so a request in flight
+	// gives up quickly. If one still does not stop, detach after a bounded wait instead
+	// of hanging OBS shutdown forever.
+	{
+		std::unique_lock<std::mutex> lock(g_mutex);
+		if (!g_cv.wait_for(lock, std::chrono::seconds(3), [] { return g_queue.empty() && !g_active; })) {
+			lock.unlock();
+			obs_log(LOG_WARNING, "background request did not stop in time; detaching the worker thread");
+			if (g_thread.joinable())
+				g_thread.detach();
+			return;
+		}
+	}
 	if (g_thread.joinable())
 		g_thread.join();
 }
@@ -155,12 +171,12 @@ bool shuttingDown()
 
 void abortInFlight()
 {
-	g_abort = true;
+	g_cancel.request();
 }
 
 bool cancelled()
 {
-	return g_stopping.load() || g_abort.load();
+	return g_cancel.requested();
 }
 
 bool waitIdle(int timeoutMs)

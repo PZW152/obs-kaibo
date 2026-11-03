@@ -3,6 +3,7 @@
 #include "app/secret_store.hpp"
 #include "core/areas.hpp"
 #include "core/bili_client.hpp"
+#include "core/cancel_scope.hpp"
 #include "core/cookies.hpp"
 #include "core/face_auth.hpp"
 #include "core/json_util.hpp"
@@ -12,11 +13,13 @@
 #include "core/text.hpp"
 #include "vendor/json11/json11.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <deque>
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -767,9 +770,18 @@ TEST(bilibili_ingest_detection)
 	CHECK(isBilibiliIngestUrl("rtmp://txy.live-play.acgvideo.com/live-bvc/"));
 	CHECK(isBilibiliIngestUrl("rtmp://js.live-play.acgvideo.com/live-bvc/"));
 	CHECK(isBilibiliIngestUrl("rtmp://live-1.acg.tv/live/"));
+	CHECK(isBilibiliIngestUrl("rtmp://live-push.bilivideo.com:1935/live-bvc/"));
+	CHECK(isBilibiliIngestUrl("RTMP://LIVE-PUSH.BILIVIDEO.COM/live-bvc/"));
 	CHECK(!isBilibiliIngestUrl("rtmp://a.rtmp.youtube.com/live2"));
 	CHECK(!isBilibiliIngestUrl("rtmp://live.twitch.tv/app"));
 	CHECK(!isBilibiliIngestUrl(""));
+	// Host-boundary matching: a substring in the path or a look-alike domain must never
+	// be mistaken for Bilibili (this decides whether the person's service is replaced).
+	CHECK(!isBilibiliIngestUrl("rtmp://evil.test/bilivideo.com"));
+	CHECK(!isBilibiliIngestUrl("rtmp://live-push.bilivideo.com.evil.test/live"));
+	CHECK(!isBilibiliIngestUrl("rtmp://notbilivideo.com/live"));
+	CHECK(!isBilibiliIngestUrl("rtmp://notacg.tv/live"));
+	CHECK(!isBilibiliIngestUrl("https://bilivideo.com/live")); // not an RTMP server URL
 }
 
 TEST(session_guards_skip_network_calls)
@@ -891,9 +903,12 @@ TEST(go_live_preflight_rules)
 	bad.offline = true;
 	issues = computePreflight(bad);
 	CHECK(preflightBlocked(issues));
-	CHECK_EQ(issues[0].code, PreflightCode::AreaLocked);
+	CHECK_EQ(issues[0].code, PreflightCode::TitleTooLong);
 	CHECK_EQ(find(issues, PreflightCode::TitleTooLong)->argument, 40);
 	CHECK_EQ(find(issues, PreflightCode::NewsTooLong)->argument, 60);
+	// lock_status can be stale (the list is cached), so a locked area is advisory only:
+	// Bilibili still has the last word when the start request is made.
+	CHECK_EQ(find(issues, PreflightCode::AreaLocked)->severity, PreflightSeverity::Warning);
 	CHECK_EQ(find(issues, PreflightCode::Offline)->severity, PreflightSeverity::Warning);
 	size_t firstWarning = issues.size();
 	for (size_t i = 0; i < issues.size(); ++i) {
@@ -913,7 +928,7 @@ TEST(go_live_preflight_rules)
 	CHECK(find(issues, PreflightCode::NoRoom) != nullptr);
 	CHECK(find(issues, PreflightCode::PickArea) == nullptr);
 
-	// A missing area blocks, a locked one blocks with its own reason.
+	// A missing area blocks; a locked one only warns (see above).
 	PreflightInput noArea = ready;
 	noArea.areaId = 0;
 	issues = computePreflight(noArea);
@@ -935,6 +950,30 @@ TEST(go_live_preflight_rules)
 	// ... but a list that is still loading is not a warning yet.
 	advisories.areasLoading = true;
 	CHECK(find(computePreflight(advisories), PreflightCode::AreasUnavailable) == nullptr);
+}
+
+TEST(cancel_scope_is_thread_scoped)
+{
+	CancelScope scope;
+	CHECK(!scope.requested());
+	std::atomic<bool> beforeRequest{true};
+	std::atomic<bool> afterRequest{false};
+	std::thread worker([&] {
+		scope.attachToCurrentThread();
+		beforeRequest.store(scope.requested());
+		scope.request();
+		afterRequest.store(scope.requested());
+	});
+	worker.join();
+	CHECK(!beforeRequest.load());
+	CHECK(afterRequest.load()); // the owning thread observes the request
+	// The regression this guards: during OBS exit the worker's request is cancelled, and
+	// the synchronous room close on the UI thread must still be allowed to run.
+	CHECK(!scope.requested());
+	scope.attachToCurrentThread();
+	CHECK(scope.requested());
+	scope.reset();
+	CHECK(!scope.requested());
 }
 
 int main()
