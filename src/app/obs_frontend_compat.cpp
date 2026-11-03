@@ -220,6 +220,7 @@ bool ensureDockManaged(QMainWindow *mainWindow, QDockWidget *dock, const char *d
 		return false;
 
 	mainWindow->addDockWidget(Qt::RightDockWidgetArea, dock);
+	dock->setFloating(false);
 	dock->show();
 	dock->raise();
 	obs_log(LOG_INFO, "dock '%s' was missing from the main window layout; added it to the right dock area",
