@@ -43,6 +43,8 @@ target_sources(
     src/app/i18n.hpp
     src/app/obs_bridge.cpp
     src/app/obs_bridge.hpp
+    src/app/obs_frontend_compat.cpp
+    src/app/obs_frontend_compat.hpp
     src/app/secret_store.cpp
     src/app/secret_store.hpp
     src/app/store.cpp
