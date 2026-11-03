@@ -100,6 +100,7 @@ private:
 	bool m_hintDismissed = false;
 	bool m_hintDismissLoaded = false;
 	QAction *m_sideDocksAction = nullptr;
+	int m_hintRetries = 0; // OBS may build its dock menu after the panel appears
 
 	// header
 	QLabel *m_logo = nullptr;

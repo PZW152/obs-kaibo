@@ -699,6 +699,10 @@ void KaiboDock::setSettingsOpen(bool open)
 
 void KaiboDock::scheduleRender()
 {
+	// A hidden dock does not paint, so do not run a state pass for it either;
+	// showEvent() renders the current state when it comes back.
+	if (!isVisible())
+		return;
 	if (m_renderTimer.isActive())
 		return;
 	m_renderTimer.start();
@@ -1144,16 +1148,23 @@ void KaiboDock::updateLayoutHint()
 		return; // a changeEvent can arrive while the constructor is still building
 	loadLayoutHintDismissed();
 	QAction *action = sideDocksAction();
+	if (!action && m_hintRetries < 5) {
+		// OBS 33 builds its Docks menu after plugins load on a cold start; retry
+		// a few times instead of giving up on the first show.
+		++m_hintRetries;
+		QTimer::singleShot(1500, this, &KaiboDock::updateLayoutHint);
+		return;
+	}
 	const bool show = !m_hintDismissed && action && !action->isChecked();
 	if (!show) {
 		m_hintWrap->hide();
 		return;
 	}
-	if (m_hintBanner->isHidden()) {
+	if (m_hintBanner->isHidden())
 		m_hintBanner->present(Banner::Tone::Info, QStringLiteral("info"), T("Hint.FullHeight"), {},
 				      T("Common.Dismiss"));
+	if (!m_hintWrap->isVisible())
 		m_hintWrap->show();
-	}
 }
 
 void KaiboDock::loadLayoutHintDismissed()
@@ -1161,8 +1172,10 @@ void KaiboDock::loadLayoutHintDismissed()
 	if (m_hintDismissLoaded)
 		return;
 	m_hintDismissLoaded = true;
-	QSettings settings(QDir(m_controller->storageDirectory()).filePath(QStringLiteral("ui-hints.ini")),
-			   QSettings::IniFormat);
+	const QString directory = m_controller->storageDirectory();
+	if (directory.isEmpty())
+		return;
+	QSettings settings(QDir(directory).filePath(QStringLiteral("ui-hints.ini")), QSettings::IniFormat);
 	m_hintDismissed = settings.value(QStringLiteral("fullHeightHintDismissed"), false).toBool();
 }
 
@@ -1170,8 +1183,10 @@ void KaiboDock::dismissLayoutHint()
 {
 	m_hintDismissed = true;
 	m_hintWrap->hide();
-	QSettings settings(QDir(m_controller->storageDirectory()).filePath(QStringLiteral("ui-hints.ini")),
-			   QSettings::IniFormat);
+	const QString directory = m_controller->storageDirectory();
+	if (directory.isEmpty())
+		return;
+	QSettings settings(QDir(directory).filePath(QStringLiteral("ui-hints.ini")), QSettings::IniFormat);
 	settings.setValue(QStringLiteral("fullHeightHintDismissed"), true);
 	settings.sync();
 }
