@@ -21,6 +21,7 @@ published by the Free Software Foundation. See LICENSE.
 
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
 #include <QDir>
 #include <QDockWidget>
 #include <QFile>
@@ -78,8 +79,9 @@ void ensureDockManaged()
 
 // First start on a brand-new OBS: the main window is still hidden behind the
 // first-run wizard, and adding the dock then leaves it floating. Wait until the
-// window is shown and no modal dialog is open, then add it to the right area.
-// Retries stop as soon as the dock is visible (or after ~20 s).
+// window is shown and neither a modal dialog nor OBS's first-run wizard (a
+// visible QDialog child) is open, then add it to the right area. Retries stop as
+// soon as the dock is visible (or after ~20 s).
 void ensureDockManagedDeferred(int attemptsLeft)
 {
 	if (!g_mainWindow || !g_dockWidget || !g_controller)
@@ -93,7 +95,16 @@ void ensureDockManagedDeferred(int attemptsLeft)
 		ensureDockManaged(); // existing install: only repairs a dropped dock
 		return;
 	}
-	if (g_dockWidget->isVisible() || (g_mainWindow->isVisible() && !QApplication::activeModalWidget())) {
+	bool blocked = !g_mainWindow->isVisible() || QApplication::activeModalWidget() != nullptr;
+	if (!blocked) {
+		for (QDialog *dialog : g_mainWindow->findChildren<QDialog *>()) {
+			if (dialog->isVisible()) {
+				blocked = true;
+				break;
+			}
+		}
+	}
+	if (!blocked) {
 		ensureDockManaged();
 		if (g_dockWidget->isVisible())
 			return;
