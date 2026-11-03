@@ -9,6 +9,8 @@
 #include <QObject>
 #include <QPointer>
 
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <exception>
@@ -21,14 +23,10 @@ namespace {
 std::mutex g_mutex;
 std::condition_variable g_cv;
 std::deque<std::function<void()>> g_queue;
-bool g_stopping = false;
+bool g_active = false; // a job is running right now
 std::thread g_thread;
-
-bool stopping()
-{
-	std::lock_guard<std::mutex> lock(g_mutex);
-	return g_stopping;
-}
+std::atomic<bool> g_stopping{false};
+std::atomic<bool> g_abort{false};
 
 // QMetaObject::invokeMethod(context, functor) needs a Qt symbol the Qt builds in
 // obs-deps do not export, so completed jobs travel as posted events instead.
@@ -75,11 +73,18 @@ protected:
 	}
 };
 
-// Intentionally leaked: the detached worker may still post while the module unloads.
+// Intentionally leaked: it lives on the UI thread and OBS destroys the application
+// object after the module is unloaded; deleting it there would be worse than leaking
+// one QObject for the rest of the process.
 QObject *receiver()
 {
 	static QObject *r = new Receiver();
 	return r;
+}
+
+bool idleLocked()
+{
+	return g_queue.empty() && !g_active;
 }
 
 void loop()
@@ -88,11 +93,14 @@ void loop()
 		std::function<void()> job;
 		{
 			std::unique_lock<std::mutex> lock(g_mutex);
-			g_cv.wait(lock, [] { return g_stopping || !g_queue.empty(); });
-			if (g_stopping)
+			g_cv.wait(lock, [] { return g_stopping.load() || !g_queue.empty(); });
+			if (g_stopping.load()) {
+				g_cv.notify_all(); // waitIdle() observes the empty queue
 				return;
+			}
 			job = std::move(g_queue.front());
 			g_queue.pop_front();
+			g_active = true;
 		}
 		try {
 			job();
@@ -101,6 +109,11 @@ void loop()
 		} catch (...) {
 			obs_log(LOG_ERROR, "background job threw an unknown exception");
 		}
+		{
+			std::lock_guard<std::mutex> lock(g_mutex);
+			g_active = false;
+		}
+		g_cv.notify_all();
 	}
 }
 
@@ -113,6 +126,8 @@ void start()
 	if (g_thread.joinable())
 		return;
 	g_stopping = false;
+	g_abort = false;
+	g_active = false;
 	g_thread = std::thread(loop);
 }
 
@@ -121,16 +136,42 @@ void shutdown()
 	{
 		std::lock_guard<std::mutex> lock(g_mutex);
 		g_stopping = true;
+		g_abort = true; // make an in-flight transfer abort instead of timing out
 		g_queue.clear();
 	}
 	g_cv.notify_all();
+	// Join rather than detach: once this returns no background job can still run plugin
+	// code, log, or post a Qt event while OBS tears the module down. The transport
+	// watches shuttingDown() through libcurl's progress callback, so a request in
+	// flight gives up quickly instead of holding the exit for its full timeout.
 	if (g_thread.joinable())
-		g_thread.detach();
+		g_thread.join();
+}
+
+bool shuttingDown()
+{
+	return g_stopping.load();
+}
+
+void abortInFlight()
+{
+	g_abort = true;
+}
+
+bool cancelled()
+{
+	return g_stopping.load() || g_abort.load();
+}
+
+bool waitIdle(int timeoutMs)
+{
+	std::unique_lock<std::mutex> lock(g_mutex);
+	return g_cv.wait_for(lock, std::chrono::milliseconds(timeoutMs), [] { return idleLocked(); });
 }
 
 void postToUi(QObject *context, std::function<void()> fn)
 {
-	if (!fn || stopping())
+	if (!fn || shuttingDown())
 		return;
 	QCoreApplication::postEvent(receiver(), new JobEvent(QPointer<QObject>(context), std::move(fn)));
 }
@@ -139,7 +180,7 @@ void run(QObject *context, std::function<void()> work, std::function<void()> don
 {
 	QPointer<QObject> guard(context);
 	std::lock_guard<std::mutex> lock(g_mutex);
-	if (g_stopping)
+	if (g_stopping.load())
 		return;
 	g_queue.push_back([work = std::move(work), done = std::move(done), guard]() mutable {
 		try {
@@ -150,7 +191,7 @@ void run(QObject *context, std::function<void()> work, std::function<void()> don
 		} catch (...) {
 			obs_log(LOG_ERROR, "background job threw an unknown exception");
 		}
-		if (done && !stopping())
+		if (done && !shuttingDown())
 			QCoreApplication::postEvent(receiver(), new JobEvent(guard, std::move(done)));
 	});
 	g_cv.notify_one();
