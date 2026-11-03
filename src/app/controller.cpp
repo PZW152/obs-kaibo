@@ -1363,7 +1363,7 @@ void LiveController::closeRoom()
 			result->error = client->stopLive(roomId);
 			result->cookies = client->cookies();
 		},
-		[this, result, generation] {
+		[this, result, generation, roomId] {
 			if (m_shuttingDown)
 				return;
 			if (generation != m_sessionGeneration) {
