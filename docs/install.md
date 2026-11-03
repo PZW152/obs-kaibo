@@ -1,5 +1,14 @@
 # 安装细节
 
+## 支持的 OBS 版本
+
+| 平台 | 支持的 OBS 版本 | 说明 |
+| --- | --- | --- |
+| Windows 10 / 11 x64 | OBS Studio **29.1 – 33.x** | 插件按 29–33 的共同 ABI 构建，并在 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.x 上做过载入验证 |
+| macOS 12+ | OBS Studio 见 [README](../README.md) | 见上面的兼容性表 |
+| Ubuntu 22.04 / 24.04 | 与构建时 PPA 的 OBS 相同及更新版本 | `.deb` 与系统 libobs 链接 |
+| Flatpak | 与 `com.obsproject.Studio` stable runtime 一致 | flatpak 包只匹配该 runtime |
+
 ## Windows 安装程序做了什么
 
 - 安装到 `C:\ProgramData\obs-studio\plugins\obs-kaibo\`（OBS 28 起的官方第三方插件目录，安装版和 Steam 版 OBS 都会加载）。
@@ -20,12 +29,14 @@ C:\ProgramData\obs-studio\plugins\
 
 ## 便携版 OBS
 
-便携模式下 OBS 从自身目录加载插件。把文件放到：
+便携模式下 OBS 从自身目录加载第三方插件。把文件放到：
 
 ```text
 <OBS 目录>\obs-plugins\64bit\obs-kaibo.dll
 <OBS 目录>\data\obs-plugins\obs-kaibo\   ← zip 里 data 文件夹的内容
 ```
+
+（OBS 33 的便携版仍然从 `obs-plugins\64bit` 读取第三方插件；`core\` 目录只放 OBS 自带插件，不要把手动安装的 Kaibo 放进 `core`。）
 
 便携模式下 Kaibo 的数据也保存在 OBS 目录内（`config\obs-studio\plugin_config\obs-kaibo\`），随 OBS 一起移动和备份。
 

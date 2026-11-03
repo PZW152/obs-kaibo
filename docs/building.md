@@ -20,9 +20,28 @@ ctest --test-dir build-tests -C Release --output-on-failure
 python3 tools/check-locales.py
 ```
 
+设计系统检查（QSS / 代码里不得出现 tokens.json 之外的颜色，`@token@` 必须存在）：
+
+```bash
+python3 tools/check-theme.py
+```
+
 ## 构建插件
 
-插件使用 [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) 的构建系统，依赖 OBS 31、Qt 6（Core、Widgets、Svg）、libcurl，会自动下载。
+插件使用 [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) 的构建系统。插件链接 Qt 6（Core、Widgets、Svg）、libcurl、libobs 与 obs-frontend-api。
+
+### 兼容性基线（1.1.0 起）
+
+发布产物按「最旧的受支持 OBS」构建，靠 ABI 向前兼容运行在更新的 OBS 上：
+
+| 平台 | 构建基线 | 说明 |
+| --- | --- | --- |
+| Windows x64 | OBS 30.0.2 + obs-deps/Qt6 2023-11-03（Qt 6.5.3） | OBS 30.x 本身要用 legacy CMake 框架构建（`OBS_CMAKE_VERSION=2.0.0`）；产物可载入 OBS 29.1–33.x |
+| macOS universal | 见 `buildspec.json` 的平台覆盖项 | 受 Xcode 版本限制，macOS 基线高于 Windows |
+| Ubuntu 22.04 / 24.04 | 发行版仓库 / PPA 的 libobs 与 Qt6 | 不读 buildspec 的 OBS 源码版本 |
+| Flatpak | `com.obsproject.Studio` stable runtime | 与 runtime 内的 OBS 匹配 |
+
+Dock 注册 API 在各版本之间不同（`obs_frontend_add_dock` 在 32 起被移除，`obs_frontend_add_dock_by_id` / `obs_frontend_add_custom_qdock` 在 30 起才有），因此 `src/app/obs_frontend_compat.cpp` 用运行时符号解析（Windows `GetProcAddress`、POSIX `dlsym`），绝不静态导入这些函数。
 
 ```bash
 # Windows（Visual Studio 2022）

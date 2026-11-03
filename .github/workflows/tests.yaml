@@ -34,3 +34,11 @@ jobs:
       - uses: actions/checkout@v5
       - name: Check zh-CN / zh-TW / en-US are complete and consistent
         run: python3 tools/check-locales.py
+
+  theme:
+    name: Design tokens
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check hard-coded colours and QSS token placeholders
+        run: python3 tools/check-theme.py

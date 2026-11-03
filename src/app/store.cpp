@@ -17,7 +17,8 @@ namespace {
 
 const char *const kOwnedFiles[] = {"settings.json",      "settings.json.bak",      "settings.json.tmp",
 				   "credentials.bin",    "credentials.bin.bak",    "credentials.bin.tmp",
-				   "service-backup.bin", "service-backup.bin.bak", "service-backup.bin.tmp"};
+				   "service-backup.bin", "service-backup.bin.bak", "service-backup.bin.tmp",
+				   "ui-hints.ini",       ".dock-first-run"};
 
 std::string moduleConfigDir()
 {
