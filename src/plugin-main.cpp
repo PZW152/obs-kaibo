@@ -20,6 +20,7 @@ published by the Free Software Foundation. See LICENSE.
 #include <plugin-support.h>
 
 #include <QAction>
+#include <QApplication>
 #include <QDir>
 #include <QDockWidget>
 #include <QFile>
@@ -52,10 +53,8 @@ obs_hotkey_id g_endLiveHotkey = OBS_INVALID_HOTKEY_ID;
 // No-op unless OBS's layout restore dropped the dock from the main window (this
 // happens on the first start, where a new user would otherwise see no panel).
 // The marker file makes that force-show a one-time event per installation, so a
-// dock that an existing user closed is not re-opened on every start. On the
-// first start OBS may apply (and drop) the dock again after FINISHED_LOADING,
-// so the caller retries a few times; the marker is written only once the dock
-// is actually visible.
+// dock that an existing user closed is not re-opened on every start. The marker
+// is written only once the dock is actually visible.
 void ensureDockManaged()
 {
 	if (!g_mainWindow || !g_dockWidget || !g_controller)
@@ -77,6 +76,32 @@ void ensureDockManaged()
 	}
 }
 
+// First start on a brand-new OBS: the main window is still hidden behind the
+// first-run wizard, and adding the dock then leaves it floating. Wait until the
+// window is shown and no modal dialog is open, then add it to the right area.
+// Retries stop as soon as the dock is visible (or after ~20 s).
+void ensureDockManagedDeferred(int attemptsLeft)
+{
+	if (!g_mainWindow || !g_dockWidget || !g_controller)
+		return;
+	if (!g_dockFirstRunKnown) {
+		const QString dataDir = g_controller->storageDirectory();
+		g_dockFirstRun = !QFileInfo::exists(QDir(dataDir).filePath(QStringLiteral(".dock-first-run")));
+		g_dockFirstRunKnown = true;
+	}
+	if (!g_dockFirstRun) {
+		ensureDockManaged(); // existing install: only repairs a dropped dock
+		return;
+	}
+	if (g_dockWidget->isVisible() || (g_mainWindow->isVisible() && !QApplication::activeModalWidget())) {
+		ensureDockManaged();
+		if (g_dockWidget->isVisible())
+			return;
+	}
+	if (attemptsLeft > 0)
+		QTimer::singleShot(500, [attemptsLeft] { ensureDockManagedDeferred(attemptsLeft - 1); });
+}
+
 void onFrontendEvent(enum obs_frontend_event event, void *)
 {
 	kaibo::LiveController *controller = g_controller.data();
@@ -86,11 +111,8 @@ void onFrontendEvent(enum obs_frontend_event event, void *)
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 		controller->startup();
 		// OBS applies the saved dock layout around this event (and can drop the
-		// dock again a moment later), so retry a few times on the first start.
-		ensureDockManaged();
-		QTimer::singleShot(250, [] { ensureDockManaged(); });
-		QTimer::singleShot(1000, [] { ensureDockManaged(); });
-		QTimer::singleShot(2500, [] { ensureDockManaged(); });
+		// dock again a moment later), so retry on the first start.
+		ensureDockManagedDeferred(40);
 		break;
 	case OBS_FRONTEND_EVENT_STREAMING_STARTING:
 		controller->onStreamingStarting();
