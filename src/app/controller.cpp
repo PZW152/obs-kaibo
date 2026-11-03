@@ -93,6 +93,16 @@ QString preflightText(const PreflightIssue &issue)
 	return {};
 }
 
+// Whether two room snapshots would render the same dock. The 30 s poll refreshes
+// these fields constantly; emitting changed() for an identical room rebuilds the whole
+// dock for nothing (one of the sources of the reported stutter).
+bool sameRoom(const RoomInfo &a, const RoomInfo &b)
+{
+	return a.roomId == b.roomId && a.title == b.title && a.areaId == b.areaId && a.parentAreaId == b.parentAreaId &&
+	       a.areaName == b.areaName && a.parentAreaName == b.parentAreaName && a.live == b.live &&
+	       a.online == b.online && a.followers == b.followers && a.liveStartedAt == b.liveStartedAt;
+}
+
 } // namespace
 
 LiveController::LiveController(QObject *parent)
@@ -484,7 +494,10 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 				return;
 			}
 			const bool wasSignedIn = m_state.auth == Auth::SignedIn;
+			const bool wasOffline = m_state.offline;
 			const std::string previousFace = m_state.profile.face;
+			const int64_t previousRoomId = m_state.roomId;
+			const RoomInfo previousRoom = m_state.room;
 			m_state.auth = Auth::SignedIn;
 			m_state.legacyAvailable = false;
 			// Keep whatever the server handed out (a freshly minted device id, a
@@ -509,10 +522,12 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 			m_state.roomId = result->roomId;
 			if (result->roomOk)
 				applyRoom(result->room);
+			bool newsUpdated = false;
 			if (result->newsOk) {
 				m_state.news = result->news;
 				m_state.newsDraft = qs(result->news);
 				m_state.newsLoaded = true;
+				newsUpdated = true;
 			}
 			if (fromLogin)
 				notify(T("Msg.LoginOk"), ToastKind::Ok);
@@ -522,10 +537,15 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 					static_cast<long long>(m_state.roomId));
 			// Accounts without a room are re-validated periodically: re-downloading the
 			// same avatar every 30 s would be pointless churn.
-			if (result->profile.face != previousFace || m_state.avatar.isNull())
+			const bool avatarUpdated = result->profile.face != previousFace;
+			if (avatarUpdated || m_state.avatar.isNull())
 				loadAvatar();
 			ensureAreas();
-			emitChanged();
+			// A periodic re-validation that changed nothing visible must not rebuild the
+			// dock (that was a source of idle stutter).
+			if (!wasSignedIn || fromLogin || wasOffline || avatarUpdated ||
+			    previousRoomId != m_state.roomId || !sameRoom(previousRoom, m_state.room) || newsUpdated)
+				emitChanged();
 		});
 }
 
@@ -824,22 +844,28 @@ void LiveController::refresh()
 				emitChanged();
 				return;
 			}
-			if (m_state.offline)
+			const bool wasOffline = m_state.offline;
+			if (wasOffline)
 				obs_log(LOG_INFO, "Bilibili is reachable again");
 			m_state.offline = false;
+			const RoomInfo previousRoom = m_state.room;
 			applyRoom(result->room);
+			bool newsUpdated = false;
 			if (result->wantNews) {
 				if (!result->newsError) {
 					m_state.news = result->news;
 					m_state.newsDraft = qs(result->news);
 					m_state.newsLoaded = true;
+					newsUpdated = true;
 				} else {
 					logApiFailure("loading the room announcement", "RoomNews/get",
 						      result->newsError);
 				}
 			}
 			ensureAreas();
-			emitChanged();
+			// The 30 s poll very often changes nothing: do not rebuild the dock then.
+			if (wasOffline || newsUpdated || !sameRoom(previousRoom, m_state.room))
+				emitChanged();
 		});
 }
 
