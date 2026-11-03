@@ -379,6 +379,7 @@ QWidget *KaiboDock::buildMainPage()
 	titleRow->addWidget(m_titleHistoryButton);
 	rc->addLayout(titleRow);
 	m_titleError = label({}, "danger", room);
+	m_titleError->setWordWrap(true);
 	rc->addWidget(m_titleError);
 
 	rc->addSpacing(6);
@@ -890,7 +891,9 @@ void KaiboDock::render()
 			: T("Settings.NotSignedIn"));
 	m_signOut->setVisible(s.auth == Auth::SignedIn);
 
+	// Elide now, and once more after the layout for a freshly shown page has run.
 	updateElidedTexts();
+	m_elideTimer.start();
 	m_rendering = false;
 }
 
@@ -1365,17 +1368,22 @@ void KaiboDock::showAccountMenu()
 {
 	const auto &s = m_controller->state();
 	QMenu menu(this);
-	connect(menu.addAction(theme().icon(QStringLiteral("external")), T("Menu.OpenCenter")), &QAction::triggered,
-		this, [] { QDesktopServices::openUrl(QUrl(QString::fromLatin1(kLiveCenterUrl))); });
+	connect(menu.addAction(theme().icon(QStringLiteral("external"), QStringLiteral("ink-muted"), 16),
+			       T("Menu.OpenCenter")),
+		&QAction::triggered, this,
+		[] { QDesktopServices::openUrl(QUrl(QString::fromLatin1(kLiveCenterUrl))); });
 	if (s.roomId > 0)
-		connect(menu.addAction(theme().icon(QStringLiteral("copy")), T("Menu.CopyRoomLink")),
+		connect(menu.addAction(theme().icon(QStringLiteral("copy"), QStringLiteral("ink-muted"), 16),
+				       T("Menu.CopyRoomLink")),
 			&QAction::triggered, this,
 			[this, id = s.roomId] { copyText(roomLink(id), T("Menu.CopyRoomLink")); });
-	connect(menu.addAction(theme().icon(QStringLiteral("refresh")), T("Menu.Refresh")), &QAction::triggered,
-		m_controller, &LiveController::refresh);
+	connect(menu.addAction(theme().icon(QStringLiteral("refresh"), QStringLiteral("ink-muted"), 16),
+			       T("Menu.Refresh")),
+		&QAction::triggered, m_controller, &LiveController::refresh);
 	menu.addSeparator();
-	connect(menu.addAction(theme().icon(QStringLiteral("settings")), T("Settings.Title")), &QAction::triggered,
-		this, [this] { setSettingsOpen(true); });
+	connect(menu.addAction(theme().icon(QStringLiteral("settings"), QStringLiteral("ink-muted"), 16),
+			       T("Settings.Title")),
+		&QAction::triggered, this, [this] { setSettingsOpen(true); });
 	m_moreButton->setDown(false);
 	execMenuAt(menu, m_moreButton);
 }

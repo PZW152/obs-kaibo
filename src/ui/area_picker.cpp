@@ -33,7 +33,8 @@ AreaPicker::AreaPicker(QWidget *parent) : QFrame(parent, Qt::Popup)
 	m_search = new QLineEdit(this);
 	m_search->setPlaceholderText(T("Area.Search"));
 	m_search->setClearButtonEnabled(true);
-	m_search->addAction(Theme::instance().icon(QStringLiteral("search")), QLineEdit::LeadingPosition);
+	m_search->addAction(Theme::instance().icon(QStringLiteral("search"), QStringLiteral("ink-muted"), 16),
+			    QLineEdit::LeadingPosition);
 	m_search->setAccessibleName(T("Area.Search"));
 	m_search->installEventFilter(this);
 	col->addWidget(m_search);

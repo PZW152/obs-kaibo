@@ -54,7 +54,7 @@ QPushButton *iconButton(const QString &icon, const QString &tooltip, QWidget *pa
 	auto *b = new QPushButton(parent);
 	b->setProperty("kbVariant", QStringLiteral("icon"));
 	b->setProperty("kbIcon", icon);
-	b->setIcon(theme().icon(icon));
+	b->setIcon(theme().icon(icon, QStringLiteral("ink-muted"), 16));
 	b->setIconSize(QSize(16, 16));
 	b->setToolTip(tooltip);
 	b->setAccessibleName(tooltip);
