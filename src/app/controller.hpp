@@ -177,11 +177,14 @@ private:
 	void applyRoom(const RoomInfo &room);
 	void loadAvatar();
 	void pollQr();
-	void handleStartLiveResult(const ApiError &error, const LiveStart &start);
+	void handleStartLiveResult(const ApiError &error, const LiveStart &start, bool startOutput);
 	void retryFaceAuth();
 	void requestFaceAuthRetry();
 	void clearFaceAuth();
-	void finishLiveStart(const LiveStart &start);
+	void finishLiveStart(const LiveStart &start, bool startOutput);
+	// Closes the room once the output that was asked to stop really stopped (or the
+	// bounded wait expired); between STARTING and STARTED the two must not race.
+	void closeRoomAfterStreamStop();
 	void finishRoomClosed(bool restoreAfter);
 	void onOutputEvent(obs::OutputEvent event);
 	void resetSession();
@@ -201,7 +204,8 @@ private:
 	QTimer m_pollTimer;
 	QTimer m_qrTimer;
 	QTimer m_faceAuthTimer;
-	QTimer m_changedTimer; // coalesces bursts of state changes into one UI repaint
+	QTimer m_changedTimer;     // coalesces bursts of state changes into one UI repaint
+	QTimer m_stopTimeoutTimer; // bounded wait for the output to stop before closing the room
 	QElapsedTimer m_qrAge;
 	std::string m_qrKey;
 	int m_qrRequestId = 0; // drops a QR reply that a newer request/stop replaced
@@ -209,6 +213,8 @@ private:
 	bool m_refreshInFlight = false;
 	bool m_ending = false;
 	bool m_pendingRestore = false;
+	bool m_closeAfterStreamStop = false;
+	bool m_startAfterGoLive = false; // "start streaming" asked for this go-live
 	bool m_shuttingDown = false;
 	bool m_closeRoomPending = false; // close was asked for while another call was busy
 	int m_faceAuthAttempt = 0;

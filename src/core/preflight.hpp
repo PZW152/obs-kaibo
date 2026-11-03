@@ -73,11 +73,8 @@ inline std::vector<PreflightIssue> computePreflight(const PreflightInput &in)
 
 	if (in.roomId <= 0) {
 		errors.push_back({PreflightCode::NoRoom, PreflightSeverity::Error, 0});
-	} else {
-		if (in.areaId <= 0)
-			errors.push_back({PreflightCode::PickArea, PreflightSeverity::Error, 0});
-		else if (in.areaLocked)
-			errors.push_back({PreflightCode::AreaLocked, PreflightSeverity::Error, 0});
+	} else if (in.areaId <= 0) {
+		errors.push_back({PreflightCode::PickArea, PreflightSeverity::Error, 0});
 	}
 	if (in.titleLength > static_cast<std::size_t>(kMaxTitleLength))
 		errors.push_back({PreflightCode::TitleTooLong, PreflightSeverity::Error, kMaxTitleLength});
@@ -86,6 +83,10 @@ inline std::vector<PreflightIssue> computePreflight(const PreflightInput &in)
 
 	if (in.offline)
 		warnings.push_back({PreflightCode::Offline, PreflightSeverity::Warning, 0});
+	// Advisory, not blocking: lock_status is account/application state on Bilibili's side
+	// and can change without this cached list knowing, so Bilibili still has the last word.
+	if (in.roomId > 0 && in.areaId > 0 && in.areaLocked)
+		warnings.push_back({PreflightCode::AreaLocked, PreflightSeverity::Warning, 0});
 	if (!in.areasLoaded && !in.areasLoading)
 		warnings.push_back({PreflightCode::AreasUnavailable, PreflightSeverity::Warning, 0});
 	if (in.titleLength == 0)

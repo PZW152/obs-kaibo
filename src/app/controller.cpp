@@ -126,6 +126,13 @@ LiveController::LiveController(QObject *parent)
 	m_changedTimer.setSingleShot(true);
 	m_changedTimer.setInterval(0);
 	connect(&m_changedTimer, &QTimer::timeout, this, [this] { emit changed(); });
+	// Ending a broadcast waits for the output to really stop before closing the room, but
+	// never forever: a lost stop event must not leave an ended-looking dock.
+	m_stopTimeoutTimer.setSingleShot(true);
+	connect(&m_stopTimeoutTimer, &QTimer::timeout, this, [this] {
+		obs_log(LOG_WARNING, "the stream did not report stopping in time; closing the room anyway");
+		closeRoomAfterStreamStop();
+	});
 }
 
 LiveController::~LiveController()
@@ -349,6 +356,7 @@ void LiveController::onStreamingStopped()
 		m_pendingRestore = false;
 		restorePreviousService();
 	}
+	closeRoomAfterStreamStop();
 	emitChanged();
 }
 
@@ -367,7 +375,9 @@ void LiveController::onOutputEvent(obs::OutputEvent event)
 		m_state.obsStreaming = false;
 		m_state.streamStarting = false;
 		m_state.reconnecting = false;
-		if (m_state.room.live && !m_ending) {
+		// Only a dropped Bilibili stream is the person's live-room problem; a stream to
+		// another destination dropping must not put the dock into the re-stream state.
+		if (m_state.room.live && !m_ending && m_state.streamTargetIsBilibili) {
 			m_state.dropped = true;
 			obs_log(LOG_WARNING, "the stream dropped; the room stays open");
 			notify(T("Msg.StreamDropped"), ToastKind::Error);
@@ -387,6 +397,7 @@ void LiveController::onOutputEvent(obs::OutputEvent event)
 			closeRoom();
 		break;
 	}
+	closeRoomAfterStreamStop();
 	emitChanged();
 }
 
@@ -399,6 +410,8 @@ void LiveController::shutdownForExit()
 	m_pollTimer.stop();
 	m_qrTimer.stop();
 	m_faceAuthTimer.stop();
+	m_stopTimeoutTimer.stop();
+	m_closeAfterStreamStop = false;
 	clearFaceAuth();
 	m_watcher->detach();
 
@@ -553,10 +566,13 @@ void LiveController::resetSession()
 {
 	m_faceAuthTimer.stop();
 	m_qrTimer.stop();
+	m_stopTimeoutTimer.stop();
 	m_qrKey.clear();
 	m_qrInFlight = false;
 	++m_qrRequestId;
 	m_closeRoomPending = false;
+	m_closeAfterStreamStop = false;
+	m_startAfterGoLive = false;
 	m_ending = false;
 	m_pendingRestore = false;
 	m_faceAuthAttempt = 0;
@@ -809,6 +825,7 @@ void LiveController::refresh()
 		bool wantNews = false;
 		ApiError newsError;
 		std::string news;
+		CookieJar cookies;
 	};
 	auto result = std::make_shared<Result>();
 	result->wantNews = !m_state.newsLoaded;
@@ -821,6 +838,7 @@ void LiveController::refresh()
 			result->error = client->fetchRoomInfo(roomId, result->room);
 			if (!result->error && result->wantNews)
 				result->newsError = client->fetchRoomNews(roomId, result->news);
+			result->cookies = client->cookies();
 		},
 		[this, result, generation] {
 			if (m_shuttingDown)
@@ -848,7 +866,12 @@ void LiveController::refresh()
 			if (wasOffline)
 				obs_log(LOG_INFO, "Bilibili is reachable again");
 			m_state.offline = false;
+			absorbClientCookies(result->cookies); // a rotating session cookie must not be lost
 			const RoomInfo previousRoom = m_state.room;
+			const bool targetBefore = m_state.streamTargetIsBilibili;
+			// The person can change OBS's streaming service while idle: keep the cached
+			// destination honest so "start streaming" never pushes somewhere else.
+			m_state.streamTargetIsBilibili = obs::streamTargetIsBilibili();
 			applyRoom(result->room);
 			bool newsUpdated = false;
 			if (result->wantNews) {
@@ -864,7 +887,8 @@ void LiveController::refresh()
 			}
 			ensureAreas();
 			// The 30 s poll very often changes nothing: do not rebuild the dock then.
-			if (wasOffline || newsUpdated || !sameRoom(previousRoom, m_state.room))
+			if (wasOffline || newsUpdated || targetBefore != m_state.streamTargetIsBilibili ||
+			    !sameRoom(previousRoom, m_state.room))
 				emitChanged();
 		});
 }
@@ -1037,6 +1061,11 @@ void LiveController::goLive()
 {
 	if (m_shuttingDown)
 		return;
+	// A "start streaming" click may have routed through go-live (OBS was pointed at
+	// another service): honor that intent once the room is opened. Consume it here so an
+	// unrelated later go-live never starts the output on its own.
+	const bool startOutput = m_startAfterGoLive;
+	m_startAfterGoLive = false;
 	if (m_state.auth != Auth::SignedIn || m_state.busy != Busy::None)
 		return;
 	if (m_state.face != FaceAuth::None) {
@@ -1102,7 +1131,7 @@ void LiveController::goLive()
 			result->error = client->startLive(roomId, areaId, result->start);
 			result->cookies = client->cookies();
 		},
-		[this, result, title, area, generation] {
+		[this, result, title, area, generation, startOutput] {
 			if (m_shuttingDown)
 				return;
 			if (generation != m_sessionGeneration) {
@@ -1142,7 +1171,7 @@ void LiveController::goLive()
 				return;
 			}
 			const bool started = !result->error;
-			handleStartLiveResult(result->error, result->start);
+			handleStartLiveResult(result->error, result->start, startOutput);
 			if (result->newsError && started) {
 				// The broadcast is running but the announcement was not saved; say so
 				// instead of leaving a silently unsaved edit behind.
@@ -1153,10 +1182,10 @@ void LiveController::goLive()
 
 // Bilibili answered the start request with "face verification required" (60024/60043):
 // show the code and wait for the person instead of failing the whole go-live.
-void LiveController::handleStartLiveResult(const ApiError &error, const LiveStart &start)
+void LiveController::handleStartLiveResult(const ApiError &error, const LiveStart &start, bool startOutput)
 {
 	if (!error) {
-		finishLiveStart(start);
+		finishLiveStart(start, startOutput);
 		return;
 	}
 	if (!start.faceAuthUrl.empty()) {
@@ -1280,7 +1309,7 @@ void LiveController::requestFaceAuthRetry()
 			if (!result->error) {
 				absorbClientCookies(result->cookies);
 				finishBusyOperation();
-				finishLiveStart(result->start);
+				finishLiveStart(result->start, false);
 				return;
 			}
 			if (!result->start.faceAuthUrl.empty()) {
@@ -1296,7 +1325,7 @@ void LiveController::requestFaceAuthRetry()
 		});
 }
 
-void LiveController::finishLiveStart(const LiveStart &start)
+void LiveController::finishLiveStart(const LiveStart &start, bool startOutput)
 {
 	clearFaceAuth();
 	m_state.server = qs(start.server);
@@ -1313,15 +1342,21 @@ void LiveController::finishLiveStart(const LiveStart &start)
 		// Capture and seal the person's service BEFORE OBS is modified: if writing the
 		// sealed file fails, the in-memory copy still restores this session, and a crash
 		// can never leave Kaibo's service in OBS with no way back.
+		bool sealed = true;
 		if (m_state.options.restoreService) {
 			ServiceBackup captured;
 			if (obs::captureStreamService(captured)) {
 				m_settings.serviceBackup = captured;
-				if (m_store.saveServiceBackup(captured))
+				sealed = m_store.saveServiceBackup(captured);
+				if (sealed) {
 					obs_log(LOG_INFO, "saved the previous OBS stream settings for restore");
-				else
+				} else {
+					// Not silently overwriting the person's service without a durable
+					// backup: tell them it can only be restored until OBS exits.
 					obs_log(LOG_WARNING,
 						"could not seal the previous stream settings; they can only be restored until OBS exits");
+					notify(T("Error.ApplyService"), ToastKind::Error);
+				}
 			}
 		}
 		std::string error;
@@ -1331,7 +1366,7 @@ void LiveController::finishLiveStart(const LiveStart &start)
 		} else {
 			m_state.streamTargetIsBilibili = true;
 			obs_log(LOG_INFO, "wrote the Bilibili stream settings into OBS");
-			if (m_state.options.autoStartStream) {
+			if (m_state.options.autoStartStream || startOutput) {
 				obs::startStreaming();
 				notify(T("Msg.LiveStarted"), ToastKind::Ok);
 			} else {
@@ -1352,8 +1387,17 @@ void LiveController::endLive()
 	obs_log(LOG_INFO, "ending the broadcast");
 	// Only stop OBS when it is actually pushing to Bilibili: a stream to another
 	// destination must survive closing the Bilibili room.
-	if ((m_state.obsStreaming || m_state.streamStarting) && m_state.streamTargetIsBilibili)
+	if ((m_state.obsStreaming || m_state.streamStarting) && m_state.streamTargetIsBilibili) {
+		// Between STREAMING_STARTING and STARTED a plain frontend stop is a no-op and the
+		// output would finish connecting with the old key. Stop the output itself and close
+		// the room only once it reports stopped (or the bounded wait expires), so the room
+		// close never races the output.
+		m_closeAfterStreamStop = true;
 		obs::stopStreaming();
+		m_stopTimeoutTimer.start(5000);
+		emitChanged();
+		return;
+	}
 	closeRoom();
 }
 
@@ -1416,8 +1460,20 @@ void LiveController::closeRoom()
 		});
 }
 
+void LiveController::closeRoomAfterStreamStop()
+{
+	if (!m_closeAfterStreamStop)
+		return;
+	m_closeAfterStreamStop = false;
+	m_stopTimeoutTimer.stop();
+	// closeRoom() replays the close itself when another call is busy.
+	closeRoom();
+}
+
 void LiveController::finishRoomClosed(bool restoreAfter)
 {
+	m_closeAfterStreamStop = false;
+	m_stopTimeoutTimer.stop();
 	const int64_t duration = m_state.liveSince > 0 ? nowSeconds() - m_state.liveSince : 0;
 	m_state.room.live = false;
 	m_state.liveSince = 0;
@@ -1473,13 +1529,19 @@ void LiveController::startObsStream()
 	if (m_shuttingDown)
 		return;
 	m_state.dropped = false;
-	// Only start OBS when its target really is Bilibili. Otherwise (the person changed
-	// the OBS service, or Kaibo's credentials are gone after a restart) pushing would go
-	// to the wrong destination, so re-run the go-live flow to rewrite the service and get
-	// fresh credentials first.
-	if (m_state.room.live &&
-	    (!m_state.streamTargetIsBilibili || m_state.server.isEmpty() || m_state.key.isEmpty())) {
-		obs_log(LOG_INFO, "start-stream requested without usable Bilibili credentials; re-running go-live");
+	// Ask OBS for the destination right now: the person may have changed its streaming
+	// service while the dock was idle, and the cached value would then start a stream to
+	// the wrong place.
+	m_state.streamTargetIsBilibili = obs::streamTargetIsBilibili();
+	if (m_state.obsStreaming || m_state.streamStarting)
+		return; // already pushing or connecting
+	if (m_state.room.live && !m_state.streamTargetIsBilibili) {
+		// OBS does not hold Kaibo's service (changed while live, or Kaibo restarted), so
+		// pushing now would go somewhere else. Re-running go-live writes the service and
+		// starts the output in one step.
+		obs_log(LOG_INFO,
+			"OBS targets another service; re-running go-live to write the Bilibili stream settings");
+		m_startAfterGoLive = true;
 		emitChanged();
 		goLive();
 		return;
