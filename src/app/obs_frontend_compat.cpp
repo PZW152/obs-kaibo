@@ -12,6 +12,7 @@ published by the Free Software Foundation. See LICENSE.
 #include "app/obs_frontend_compat.hpp"
 
 #include <obs-module.h>
+#include <plugin-support.h>
 
 #include <QAction>
 #include <QDockWidget>
