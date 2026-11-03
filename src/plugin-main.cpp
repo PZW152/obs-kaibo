@@ -86,7 +86,7 @@ void ensureDockManaged()
 // the main window focused and no dialog (wizard, OBS message box) is open.
 bool dockPlacementBlocked()
 {
-	if (!g_mainWindow || !g_mainWindow->isVisible() || !g_mainWindow->isActiveWindow())
+	if (!g_mainWindow || !g_mainWindow->isVisible())
 		return true;
 	if (QApplication::activeModalWidget() != nullptr)
 		return true;
