@@ -24,11 +24,14 @@ published by the Free Software Foundation. See LICENSE.
 #include <QDialog>
 #include <QDir>
 #include <QDockWidget>
+#include <QEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QMainWindow>
+#include <QObject>
 #include <QPointer>
 #include <QTimer>
+#include <QWidget>
 
 #include <utility>
 
@@ -77,41 +80,52 @@ void ensureDockManaged()
 	}
 }
 
-// First start on a brand-new OBS: the main window is still hidden behind the
-// first-run wizard, and adding the dock then leaves it floating. Wait until the
-// window is shown and neither a modal dialog nor OBS's first-run wizard (a
-// visible QDialog child) is open, then add it to the right area. Retries stop as
-// soon as the dock is visible (or after ~20 s).
-void ensureDockManagedDeferred(int attemptsLeft)
+// First start on a brand-new OBS: OBS's first-run wizard is still open and the
+// main window is not focused yet, so adding the dock during FINISHED_LOADING
+// leaves it floating above the wizard. Only place it once the user actually has
+// the main window focused and no dialog (wizard, OBS message box) is open.
+bool dockPlacementBlocked()
 {
-	if (!g_mainWindow || !g_dockWidget || !g_controller)
-		return;
+	if (!g_mainWindow || !g_mainWindow->isVisible() || !g_mainWindow->isActiveWindow())
+		return true;
+	if (QApplication::activeModalWidget() != nullptr)
+		return true;
+	for (QWidget *widget : QApplication::topLevelWidgets()) {
+		if (auto *dialog = qobject_cast<QDialog *>(widget); dialog && dialog->isVisible())
+			return true;
+	}
+	return false;
+}
+
+void placeFirstRunDock()
+{
 	if (!g_dockFirstRunKnown) {
-		const QString dataDir = g_controller->storageDirectory();
-		g_dockFirstRun = !QFileInfo::exists(QDir(dataDir).filePath(QStringLiteral(".dock-first-run")));
+		const QString dataDir = g_controller ? g_controller->storageDirectory() : QString();
+		g_dockFirstRun = dataDir.isEmpty() ||
+				 !QFileInfo::exists(QDir(dataDir).filePath(QStringLiteral(".dock-first-run")));
 		g_dockFirstRunKnown = true;
 	}
-	if (!g_dockFirstRun) {
-		ensureDockManaged(); // existing install: only repairs a dropped dock
+	if (!g_dockFirstRun || g_dockMarkerWritten || dockPlacementBlocked())
 		return;
-	}
-	bool blocked = !g_mainWindow->isVisible() || QApplication::activeModalWidget() != nullptr;
-	if (!blocked) {
-		for (QDialog *dialog : g_mainWindow->findChildren<QDialog *>()) {
-			if (dialog->isVisible()) {
-				blocked = true;
-				break;
-			}
-		}
-	}
-	if (!blocked) {
-		ensureDockManaged();
-		if (g_dockWidget->isVisible())
-			return;
-	}
-	if (attemptsLeft > 0)
-		QTimer::singleShot(500, [attemptsLeft] { ensureDockManagedDeferred(attemptsLeft - 1); });
+	ensureDockManaged();
 }
+
+// Retrigger the placement when the main window is activated (the wizard just
+// closed) or shown; the timers below are a fallback for hosts that do neither.
+class DockPlacementFilter : public QObject {
+public:
+	using QObject::QObject;
+
+protected:
+	bool eventFilter(QObject *watched, QEvent *event) override
+	{
+		if (watched == g_mainWindow.data() &&
+		    (event->type() == QEvent::WindowActivate || event->type() == QEvent::Show)) {
+			QTimer::singleShot(300, [] { placeFirstRunDock(); });
+		}
+		return QObject::eventFilter(watched, event);
+	}
+};
 
 void onFrontendEvent(enum obs_frontend_event event, void *)
 {
@@ -122,8 +136,17 @@ void onFrontendEvent(enum obs_frontend_event event, void *)
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 		controller->startup();
 		// OBS applies the saved dock layout around this event (and can drop the
-		// dock again a moment later), so retry on the first start.
-		ensureDockManagedDeferred(40);
+		// dock again a moment later); on the first start also wait for the
+		// first-run wizard to close and the main window to get focus.
+		placeFirstRunDock();
+		if (g_dockFirstRun && !g_dockMarkerWritten) {
+			if (g_mainWindow)
+				g_mainWindow->installEventFilter(new DockPlacementFilter(g_mainWindow.data()));
+			for (int delay : {1000, 3000, 8000, 15000})
+				QTimer::singleShot(delay, [] { placeFirstRunDock(); });
+		} else {
+			QTimer::singleShot(250, [] { ensureDockManaged(); });
+		}
 		break;
 	case OBS_FRONTEND_EVENT_STREAMING_STARTING:
 		controller->onStreamingStarting();
