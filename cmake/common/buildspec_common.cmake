@@ -54,12 +54,29 @@ function(_setup_obs_studio)
 
   if(OS_WINDOWS)
     set(_cmake_generator "${CMAKE_GENERATOR}")
-    set(_cmake_arch "-A ${arch},version=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+    if(_obs_version VERSION_LESS 31.0.0)
+      # OBS 30 and older read CMAKE_GENERATOR_PLATFORM for their own dependency
+      # lookup, which would include the SDK version suffix from -A and break it.
+      set(_cmake_arch "-A ${arch}")
+    else()
+      set(_cmake_arch "-A ${arch},version=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+    endif()
     set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION} -DCMAKE_ENABLE_SCRIPTING=OFF")
   elseif(OS_MACOS)
     set(_cmake_generator "Xcode")
     set(_cmake_arch "-DCMAKE_OSX_ARCHITECTURES:STRING='arm64;x86_64'")
     set(_cmake_extra "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    # OBS 30 derives the SDK version from CMAKE_OSX_SYSROOT, but the Xcode
+    # generator only passes the SDK name on, so hand OBS the full SDK path.
+    execute_process(
+      COMMAND xcrun --sdk macosx --show-sdk-path
+      OUTPUT_VARIABLE _macos_sdk_path
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE _macos_sdk_result
+    )
+    if(_macos_sdk_result EQUAL 0 AND _macos_sdk_path)
+      string(APPEND _cmake_extra " -DCMAKE_OSX_SYSROOT:STRING=${_macos_sdk_path}")
+    endif()
   endif()
 
   message(STATUS "Configure ${label} (${arch})")
@@ -68,8 +85,8 @@ function(_setup_obs_studio)
       "${CMAKE_COMMAND}" -S "${dependencies_dir}/${_obs_destination}" -B
       "${dependencies_dir}/${_obs_destination}/build_${arch}" -G ${_cmake_generator} "${_cmake_arch}"
       -DOBS_CMAKE_VERSION:STRING=3.0.0 -DENABLE_PLUGINS:BOOL=OFF -DENABLE_FRONTEND:BOOL=OFF -DENABLE_UI:BOOL=OFF
-      -DOBS_VERSION_OVERRIDE:STRING=${_obs_version} "-DCMAKE_PREFIX_PATH='${CMAKE_PREFIX_PATH}'" ${_is_fresh}
-      ${_cmake_extra}
+      -DENABLE_BROWSER:BOOL=OFF -DOBS_VERSION_OVERRIDE:STRING=${_obs_version}
+      "-DCMAKE_PREFIX_PATH='${CMAKE_PREFIX_PATH}'" ${_is_fresh} ${_cmake_extra}
     RESULT_VARIABLE _process_result
     COMMAND_ERROR_IS_FATAL ANY
     OUTPUT_QUIET
