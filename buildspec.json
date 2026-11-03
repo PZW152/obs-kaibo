@@ -31,6 +31,22 @@
             }
         }
     },
+    "platformOverrides": {
+        "macos": {
+            "obs-studio": {
+                "version": "31.1.1",
+                "hash": "39751f067bacc13d44b116c5138491b5f1391f91516d3d590d874edd21292291"
+            },
+            "prebuilt": {
+                "version": "2025-07-11",
+                "hash": "495687e63383d1a287684b6e2e9bfe246bb8f156fe265926afb1a325af1edd2a"
+            },
+            "qt6": {
+                "version": "2025-07-11",
+                "hash": "d3f5f04b6ea486e032530bdf0187cbda9a54e0a49621a4c8ba984c5023998867"
+            }
+        }
+    },
     "platformConfig": {
         "macos": {
             "bundleId": "io.github.pzw152.obs-kaibo"

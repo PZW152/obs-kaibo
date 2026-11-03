@@ -158,6 +158,27 @@ function(_check_dependencies)
     string(JSON label GET ${data} label)
     string(JSON revision ERROR_VARIABLE error GET ${data} revision ${platform})
 
+    # A platform may need a newer OBS baseline when the OBS sources matching the
+    # oldest supported version cannot be built on it (see platformOverrides in
+    # buildspec.json). The override only replaces the version and archive hash of
+    # the current platform; URL and labels stay in the shared dependency entry.
+    string(
+      JSON
+      platform_override_version
+      ERROR_VARIABLE platform_override_error
+      GET ${buildspec}
+      platformOverrides
+      ${platform}
+      ${dependency}
+      version
+    )
+    if(NOT platform_override_error)
+      string(JSON platform_override_hash GET ${buildspec} platformOverrides ${platform} ${dependency} hash)
+      set(version ${platform_override_version})
+      set(hash ${platform_override_hash})
+      message(STATUS "Using ${label} ${version} for ${platform} (platform override)")
+    endif()
+
     message(STATUS "Setting up ${label} (${arch})")
 
     set(file "${${dependency}_filename}")
