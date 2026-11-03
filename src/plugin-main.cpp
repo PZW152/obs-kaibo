@@ -20,7 +20,10 @@ published by the Free Software Foundation. See LICENSE.
 #include <plugin-support.h>
 
 #include <QAction>
+#include <QDir>
 #include <QDockWidget>
+#include <QFile>
+#include <QFileInfo>
 #include <QMainWindow>
 #include <QPointer>
 #include <QTimer>
@@ -40,15 +43,30 @@ QPointer<kaibo::LiveController> g_controller;
 QPointer<kaibo::ui::KaiboDock> g_dock;
 QPointer<QDockWidget> g_dockWidget;
 QPointer<QMainWindow> g_mainWindow;
+bool g_dockFirstRun = false;
+bool g_dockFirstRunResolved = false;
 obs_hotkey_id g_goLiveHotkey = OBS_INVALID_HOTKEY_ID;
 obs_hotkey_id g_endLiveHotkey = OBS_INVALID_HOTKEY_ID;
 
 // No-op unless OBS's layout restore dropped the dock from the main window (this
 // happens on the first start, where a new user would otherwise see no panel).
+// The marker file makes that force-show a one-time event per installation, so a
+// dock that an existing user closed is not re-opened on every start.
 void ensureDockManaged()
 {
-	if (g_mainWindow && g_dockWidget)
-		kaibo::obsfrontend::ensureDockManaged(g_mainWindow.data(), g_dockWidget.data(), kDockId);
+	if (!g_mainWindow || !g_dockWidget)
+		return;
+	if (!g_dockFirstRunResolved && g_controller) {
+		const QString dataDir = g_controller->storageDirectory();
+		const QString marker = QDir(dataDir).filePath(QStringLiteral(".dock-first-run"));
+		g_dockFirstRun = !QFileInfo::exists(marker);
+		g_dockFirstRunResolved = true;
+		QDir().mkpath(dataDir);
+		QFile file(marker);
+		if (file.open(QIODevice::WriteOnly))
+			file.close();
+	}
+	kaibo::obsfrontend::ensureDockManaged(g_mainWindow.data(), g_dockWidget.data(), kDockId, g_dockFirstRun);
 }
 
 void onFrontendEvent(enum obs_frontend_event event, void *)
