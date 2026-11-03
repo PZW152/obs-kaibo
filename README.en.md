@@ -29,7 +29,7 @@ Supports **OBS Studio 29.1 and newer** (Windows; load-tested on 29.1.3 / 30.2.3 
 - **macOS**: install `obs-kaibo-<version>-macos-universal.pkg`.
 - **Linux**: `.deb` for Ubuntu/Debian; `.flatpak` for the Flatpak build of OBS.
 
-The dock appears on the right after the first start; you can also open it from **Tools → Kaibo**. To make it fill the whole right column, see [troubleshooting](docs/troubleshooting.md#想把面板放到最右侧占满整栏).
+The dock shows up automatically after the first start; you can also open it from **Tools → Kaibo**. On a brand-new OBS install it may appear as a floating window on the very first launch — click **Tools → put the panel on the full-height right side** to dock it. To make it fill the whole right column, see [troubleshooting](docs/troubleshooting.md#想把面板放到最右侧占满整栏).
 
 ## Uninstall and data
 

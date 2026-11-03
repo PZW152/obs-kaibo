@@ -59,7 +59,7 @@ Kaibo 是 OBS Studio 的一个停靠面板（Dock）。登录一次之后，开�
 
 1. 从 [Releases](https://github.com/PZW152/obs-kaibo/releases/latest) 下载 `obs-kaibo-<版本>-windows-x64-installer.exe`。
 2. 关闭 OBS，运行安装程序。插件会安装到 `C:\ProgramData\obs-studio\plugins\obs-kaibo`（OBS 官方插件目录，Steam 版 OBS 也适用）。
-3. 打开 OBS，Kaibo 面板会出现在右侧；也可以从 **工具 → Kaibo 开播** 打开。想让它占满右侧整列，见 [常见问题](docs/troubleshooting.md#想把面板放到最右侧占满整栏)。
+3. 打开 OBS，Kaibo 面板会自动显示；也可以从 **工具 → Kaibo 开播** 打开。全新安装的 OBS 首次启动时面板可能以浮动窗口出现，点 **工具 → 将面板放到右侧全高** 即可归位。想让它占满右侧整列，见 [常见问题](docs/troubleshooting.md#想把面板放到最右侧占满整栏)。
 
 升级时直接运行新版本安装程序即可，设置和登录都会保留。
 

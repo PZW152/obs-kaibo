@@ -29,7 +29,7 @@ Kaibo 是 OBS Studio 的停駐面板（Dock）。登入一次之後，開播只�
 - **macOS**：安裝 `obs-kaibo-<版本>-macos-universal.pkg`。
 - **Linux**：Ubuntu/Debian 使用 `.deb`；Flatpak 版 OBS 使用 `.flatpak`（`flatpak install --user ./obs-kaibo-*.flatpak`）。
 
-開啟 OBS 後，Kaibo 面板會出現在右側；也可以從 **工具 → Kaibo** 開啟。要讓它佔滿右側整欄，請見[常見問題](docs/troubleshooting.md#想把面板放到最右侧占满整栏)。
+開啟 OBS 後，Kaibo 面板會自動顯示；也可以從 **工具 → Kaibo** 開啟。全新安裝的 OBS 首次啟動時面板可能以浮動視窗出現，點 **工具 → 將面板放到右側全高** 即可歸位。要讓它佔滿右側整欄，請見[常見問題](docs/troubleshooting.md#想把面板放到最右侧占满整栏)。
 
 ## 解除安裝與資料
 
