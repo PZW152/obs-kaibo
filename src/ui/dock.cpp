@@ -1254,7 +1254,9 @@ void KaiboDock::changeEvent(QEvent *event)
 		if (theme().followPalette(QApplication::palette()))
 			applyTheme();
 	}
-	if (event->type() == QEvent::ParentChange || event->type() == QEvent::WindowChange)
+	// The dock can be re-parented when OBS restores the saved layout or the panel is
+	// floated; the main-window dock action may only become reachable then.
+	if (event->type() == QEvent::ParentChange)
 		updateLayoutHint();
 }
 
