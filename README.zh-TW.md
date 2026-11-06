@@ -13,7 +13,7 @@
 
 <p align="center"><a href="https://github.com/PZW152/obs-kaibo/releases/latest">下載</a> · <a href="README.md">简体中文</a> · <a href="README.en.md">English</a></p>
 
-<p align="center"><img src="docs/images/dock-design.png" width="640" alt="Kaibo 面板設計稿"></p>
+<p align="center"><img src="docs/images/dock.png" width="640" alt="直播中的 Kaibo 面板：深色與淺色主題"></p>
 
 ## 它做什麼
 

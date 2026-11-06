@@ -13,7 +13,7 @@
 
 <p align="center"><a href="https://github.com/PZW152/obs-kaibo/releases/latest">Download</a> · <a href="README.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a></p>
 
-<p align="center"><img src="docs/images/dock-design.png" width="640" alt="Kaibo dock design, dark and light"></p>
+<p align="center"><img src="docs/images/dock.png" width="640" alt="The Kaibo dock during a broadcast, dark and light"></p>
 
 ## What it does
 
