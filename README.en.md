@@ -6,7 +6,7 @@
   <a href="https://github.com/PZW152/obs-kaibo/actions/workflows/tests.yaml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/PZW152/obs-kaibo/tests.yaml?branch=main&label=tests"></a>
   <a href="https://github.com/PZW152/obs-kaibo/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/PZW152/obs-kaibo/total?color=111214"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/PZW152/obs-kaibo?color=111214"></a>
-  <img alt="OBS 29.1+" src="https://img.shields.io/badge/OBS-29.1%2B-111214">
+  <img alt="OBS 28+" src="https://img.shields.io/badge/OBS-28%2B-111214">
 </p>
 
 <p align="center"><b>Go live on Bilibili from OBS in one click.</b><br>QR sign-in · title and area · automatic stream settings · dropped-stream alerts · 简体 / 繁體 / English</p>
@@ -23,7 +23,7 @@ Also: in-dock QR sign-in with scanned/expired states, area search with recents, 
 
 ## Install
 
-Supports **OBS Studio 29.1 and newer** (Windows; load-tested on 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.x). The macOS build needs OBS 31.1+; Linux and Flatpak match the OBS from the distro repository / runtime — see [docs/install.md](docs/install.md).
+Supports **OBS Studio 28 and newer** (Windows; load-tested on 28.0 / 28.1 / 29.0 / 29.1 / 30.0 / 30.2 / 31.1 / 32.2 / 33.0). The macOS build needs OBS 31.1+; Linux and Flatpak match the OBS from the distro repository / runtime — see [docs/install.md](docs/install.md).
 
 - **Windows**: download `obs-kaibo-<version>-windows-x64-installer.exe` from [Releases](https://github.com/PZW152/obs-kaibo/releases/latest), close OBS and run it. It installs to `C:\ProgramData\obs-studio\plugins\obs-kaibo` (works for the Steam build of OBS too). Running a newer installer upgrades in place and keeps your settings.
 - **macOS**: install `obs-kaibo-<version>-macos-universal.pkg`.

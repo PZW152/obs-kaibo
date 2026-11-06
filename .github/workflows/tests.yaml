@@ -41,6 +41,26 @@ jobs:
       - name: Run
         run: ctest --test-dir build-tests --output-on-failure
 
+  ui-preview:
+    name: Dock screenshots
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Qt and fonts
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qt6-base-dev libqt6svg6-dev fonts-noto-cjk ninja-build
+      - name: Build
+        run: cmake -S tests/ui-preview -B build-preview -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build-preview
+      - name: Render
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          KB_THEME=dark KB_OUT=shots/dark build-preview/kaibo-ui-preview
+          KB_THEME=light KB_OUT=shots/light build-preview/kaibo-ui-preview
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dock-screenshots
+          path: shots
+
   locales:
     name: Locale files
     runs-on: ubuntu-24.04

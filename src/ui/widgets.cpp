@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ui/widgets.hpp"
 #include "app/i18n.hpp"
+#include "app/qt_compat.hpp"
 #include "ui/theme.hpp"
 #include "vendor/qrcodegen/qrcodegen.hpp"
 
@@ -46,6 +47,7 @@ QPushButton *button(const QString &text, const char *variant, QWidget *parent)
 	if (variant)
 		b->setProperty("kbVariant", QString::fromLatin1(variant));
 	b->setCursor(Qt::PointingHandCursor);
+	b->setFocusPolicy(Qt::TabFocus); // a click must not leave the keyboard focus ring behind
 	return b;
 }
 
@@ -59,6 +61,7 @@ QPushButton *iconButton(const QString &icon, const QString &tooltip, QWidget *pa
 	b->setToolTip(tooltip);
 	b->setAccessibleName(tooltip);
 	b->setCursor(Qt::PointingHandCursor);
+	b->setFocusPolicy(Qt::TabFocus);
 	return b;
 }
 
@@ -520,13 +523,14 @@ void Banner::resizeEvent(QResizeEvent *event)
 	updateActionDirection();
 }
 
-// At 280px (the dock minimum) two action buttons do not fit side by side; stacking
-// them keeps both labels readable instead of letting Qt clip them.
+// Two action buttons sit side by side when their labels fit, and stack otherwise, so
+// neither is clipped. Measured, because label widths differ a lot between languages.
 void Banner::updateActionDirection()
 {
-	const int narrowWidth = theme().length("dock-min", 280) + theme().length("space-6", 24) * 2;
-	const QBoxLayout::Direction direction = width() < narrowWidth ? QBoxLayout::TopToBottom
-								      : QBoxLayout::LeftToRight;
+	const QMargins margins = contentsMargins();
+	const int available = width() - margins.left() - margins.right() - m_icon->width() - layout()->spacing();
+	const int needed = m_primary->sizeHint().width() + m_secondary->sizeHint().width() + m_actions->spacing();
+	const QBoxLayout::Direction direction = needed > available ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
 	if (m_actions->direction() == direction)
 		return;
 	m_actions->setDirection(direction);
@@ -536,7 +540,7 @@ void Banner::updateActionDirection()
 // ------------------------------------------------------------------ Toast
 Toast::Toast(QWidget *parent) : QFrame(parent)
 {
-	setObjectName(QStringLiteral("KbToast"));
+	setObjectId(this, QStringLiteral("KbToast"));
 	setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
 	auto *row = new QHBoxLayout(this);
 	row->setContentsMargins(12, 10, 12, 10);

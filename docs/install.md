@@ -4,7 +4,7 @@
 
 | 平台 | 支持的 OBS 版本 | 说明 |
 | --- | --- | --- |
-| Windows 10 / 11 x64 | OBS Studio **29.1 – 33.x** | 插件按 29–33 的共同 ABI 构建，并在 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.x 上做过载入验证 |
+| Windows 10 / 11 x64 | OBS Studio **28.0 – 33.x** | 插件按 28–33 的共同 ABI 构建，并在 28.0 / 28.1 / 29.0 / 29.1 / 30.0 / 30.2 / 31.1 / 32.2 / 33.0 上做过载入验证 |
 | macOS 12+ | OBS Studio 见 [README](../README.md) | 见上面的兼容性表 |
 | Ubuntu 22.04 / 24.04 | 与构建时 PPA 的 OBS 相同及更新版本 | `.deb` 与系统 libobs 链接 |
 | Flatpak | 与 `com.obsproject.Studio` stable runtime 一致 | flatpak 包只匹配该 runtime |

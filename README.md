@@ -6,7 +6,7 @@
   <a href="https://github.com/PZW152/obs-kaibo/actions/workflows/tests.yaml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/PZW152/obs-kaibo/tests.yaml?branch=main&label=tests"></a>
   <a href="https://github.com/PZW152/obs-kaibo/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/PZW152/obs-kaibo/total?color=111214"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/PZW152/obs-kaibo?color=111214"></a>
-  <img alt="OBS 29.1+" src="https://img.shields.io/badge/OBS-29.1%2B-111214">
+  <img alt="OBS 28+" src="https://img.shields.io/badge/OBS-28%2B-111214">
 </p>
 
 <p align="center"><b>在 OBS 里一键开播哔哩哔哩。</b><br>扫码登录 · 改标题和分区 · 自动写入推流设置 · 断流提醒 · 简体 / 繁體 / English</p>
@@ -53,7 +53,7 @@ Kaibo 是 OBS Studio 的一个停靠面板（Dock）。登录一次之后，开�
 
 ## 安装
 
-支持 **OBS Studio 29.1 及以上**（Windows；已在 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.x 上实测载入）。macOS 版本对 OBS 版本要求更高（31.1+），Linux / Flatpak 与发行版或 runtime 的 OBS 匹配，详见 [docs/install.md](docs/install.md)。
+支持 **OBS Studio 28 及以上**（Windows；已在 28.0 / 28.1 / 29.0 / 29.1 / 30.0 / 30.2 / 31.1 / 32.2 / 33.0 上实测载入）。macOS 版本对 OBS 版本要求更高（31.1+），Linux / Flatpak 与发行版或 runtime 的 OBS 匹配，详见 [docs/install.md](docs/install.md)。
 
 ### Windows（推荐安装程序）
 

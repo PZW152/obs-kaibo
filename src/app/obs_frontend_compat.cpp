@@ -10,6 +10,7 @@ published by the Free Software Foundation. See LICENSE.
 */
 
 #include "app/obs_frontend_compat.hpp"
+#include "app/qt_compat.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -69,7 +70,7 @@ const char *apiName(DockApi api)
 QDockWidget *createDock(QMainWindow *mainWindow, const char *dockId, const QString &title)
 {
 	auto *dock = new QDockWidget(title, mainWindow);
-	dock->setObjectName(QString::fromUtf8(dockId));
+	setObjectId(dock, QString::fromUtf8(dockId));
 	dock->setAllowedAreas(Qt::AllDockWidgetAreas);
 	dock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable |
 			  QDockWidget::DockWidgetFloatable);
