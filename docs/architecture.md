@@ -6,6 +6,7 @@ src/
 │   ├── bili_client   B 站接口：登录、直播间、分区、开播/关播、公告、退出（通过 HttpTransport 注入网络层）
 │   ├── cookies       会话 Cookie 解析与合并
 │   ├── areas         分区列表解析、搜索、最近使用
+│   ├── live_state    状态判断：直播阶段、房间改动对比、轮询频率（纯函数，controller 只负责调用）
 │   ├── preflight     开播前检查（登录/直播间/分区/标题/公告/离线），产出可本地化的阻塞项与警告
 │   ├── settings_model settings.json 的读写与默认值；原子写入
 │   ├── text / md5    URL 编码、计数格式化（1.2万 / 1.2萬 / 12K）、签名用 MD5
@@ -31,6 +32,10 @@ src/
 
 - **单线程网络**：`BiliClient` 不是线程安全的，所有调用都在 `worker` 的一个线程上排队执行；UI 线程永远不会等网络。回调用 `QPointer` 守护，界面销毁后自动丢弃。
 - **状态对账**：直播间状态（B 站）和推流状态（OBS）分开记录，`LiveController::phase()` 合成为 6 种情况，界面只根据它渲染文案和修复按钮。
+- **判断与副作用分开**：`core/live_state.hpp`、`core/preflight.hpp` 只回答问题、没有副作用，有单元测试；`LiveController` 负责流程和调用 OBS。新的判断逻辑优先放进 core。
+- **改动只算一次**：保存、开播和「未保存」提示都来自同一份 `RoomEdits`，三者不会不一致。
+- **轮询频率**：直播中 30 秒；未开播时面板可见 60 秒、隐藏 5 分钟；未开播且离线时逐步退避，最长 5 分钟。`Room/get_info` 是公开接口，登录失效时照常返回，所以每 30 分钟额外用 `nav` 确认一次登录。
+- **连接复用**：`CurlTransport` 保留 easy handle 以复用 TLS 连接，因此一个实例只能在一个线程上用；请求失败后丢弃 handle，下一次重新连接。
 - **断流与主动停止的区分**：订阅推流输出的 `stop` 信号，`code == OBS_OUTPUT_SUCCESS` 才算主动停止；其余视为断流，不会自动关闭直播间。
 - **设计系统即数据**：`data/theme/tokens.json` 与在线设计系统共用；`kaibo.qss` 用 `@token@` 占位，运行时按深色/浅色替换。改颜色只改一处。
 - **数据所有权**：Kaibo 只写 `plugin_config/obs-kaibo/` 下列出的文件，删除时按清单删除，不扫描、不猜测。

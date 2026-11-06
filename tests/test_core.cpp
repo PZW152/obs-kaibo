@@ -7,6 +7,7 @@
 #include "core/cookies.hpp"
 #include "core/face_auth.hpp"
 #include "core/json_util.hpp"
+#include "core/live_state.hpp"
 #include "core/md5.hpp"
 #include "core/preflight.hpp"
 #include "core/settings_model.hpp"
@@ -18,6 +19,7 @@
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -103,6 +105,141 @@ bool hasHeader(const kaibo::HttpRequest &request, const std::string &prefix)
 } // namespace
 
 using namespace kaibo;
+
+TEST(phase_combines_room_and_output_state)
+{
+	using kaibo::LivePhase;
+	kaibo::PhaseInput in;
+	CHECK(kaibo::derivePhase(in) == LivePhase::Offline);
+
+	in.signedIn = true;
+	in.obsStreaming = true;
+	CHECK(kaibo::derivePhase(in) == LivePhase::Offline); // streaming to another platform
+	in.streamTargetIsBilibili = true;
+	CHECK(kaibo::derivePhase(in) == LivePhase::StreamOnly);
+	in.signedIn = false;
+	CHECK(kaibo::derivePhase(in) == LivePhase::Offline);
+
+	in = {};
+	in.signedIn = true;
+	in.roomLive = true;
+	CHECK(kaibo::derivePhase(in) == LivePhase::RoomOnly);
+	in.dropped = true;
+	CHECK(kaibo::derivePhase(in) == LivePhase::Dropped);
+	in.obsStreaming = true;
+	CHECK(kaibo::derivePhase(in) == LivePhase::Dropped); // pushing elsewhere does not fix it
+	in.streamTargetIsBilibili = true;
+	CHECK(kaibo::derivePhase(in) == LivePhase::Live);
+	in.reconnecting = true;
+	CHECK(kaibo::derivePhase(in) == LivePhase::Reconnecting);
+}
+
+TEST(room_edits_are_only_what_changed)
+{
+	kaibo::RoomInfo room;
+	room.title = "old";
+	room.areaId = 10;
+	kaibo::RoomDrafts drafts;
+	drafts.title = "old";
+	drafts.area = 10;
+	CHECK(!kaibo::diffRoom(room, drafts).any());
+
+	drafts.title = ""; // an emptied field keeps the current title
+	drafts.area = 0;   // so does an unset area
+	CHECK(!kaibo::diffRoom(room, drafts).any());
+
+	drafts.title = "new";
+	drafts.area = 20;
+	auto edits = kaibo::diffRoom(room, drafts);
+	CHECK(edits.title && *edits.title == "new");
+	CHECK(edits.area && *edits.area == 20);
+	CHECK(!edits.news);
+
+	drafts = {};
+	drafts.news = "hello";
+	CHECK(!kaibo::diffRoom(room, drafts).any()); // announcement never loaded: nothing to compare
+	drafts.newsLoaded = true;
+	edits = kaibo::diffRoom(room, drafts);
+	CHECK(edits.news && *edits.news == "hello");
+	drafts.savedNews = "hello";
+	CHECK(!kaibo::diffRoom(room, drafts).any());
+	drafts.news.clear(); // clearing an announcement is an edit
+	edits = kaibo::diffRoom(room, drafts);
+	CHECK(edits.news && edits.news->empty());
+}
+
+TEST(applied_edits_leave_nothing_unsaved)
+{
+	kaibo::AreaGroup group{1, "Games", {}};
+	kaibo::Area area;
+	area.id = 20;
+	area.name = "Chess";
+	area.parentId = 1;
+	area.parentName = "Games";
+	group.areas.push_back(area);
+	const std::vector<kaibo::AreaGroup> areas = {group};
+
+	kaibo::RoomInfo room;
+	room.title = "old";
+	room.areaId = 10;
+	std::string savedNews = "before";
+	kaibo::RoomDrafts drafts;
+	drafts.title = "new";
+	drafts.area = 20;
+	drafts.newsLoaded = true;
+	drafts.news = "after";
+	drafts.savedNews = savedNews;
+
+	// Regression: going live saved the announcement but kept reporting it as unsaved.
+	kaibo::applyRoomEdits(kaibo::diffRoom(room, drafts), areas, room, savedNews);
+	CHECK_EQ(room.title, std::string("new"));
+	CHECK_EQ(room.areaId, 20);
+	CHECK_EQ(room.areaName, std::string("Chess"));
+	CHECK_EQ(room.parentAreaId, 1);
+	CHECK_EQ(room.parentAreaName, std::string("Games"));
+	CHECK_EQ(savedNews, std::string("after"));
+	drafts.savedNews = savedNews;
+	CHECK(!kaibo::diffRoom(room, drafts).any());
+
+	// An area missing from the list still records its id.
+	kaibo::RoomEdits unknown;
+	unknown.area = 99;
+	kaibo::applyRoomEdits(unknown, areas, room, savedNews);
+	CHECK_EQ(room.areaId, 99);
+	CHECK_EQ(savedNews, std::string("after"));
+}
+
+TEST(poll_rate_follows_the_broadcast_and_the_dock)
+{
+	kaibo::PollInput in;
+	CHECK_EQ(kaibo::pollIntervalMs(in), kaibo::kPollIdleHiddenMs);
+	in.dockVisible = true;
+	CHECK_EQ(kaibo::pollIntervalMs(in), kaibo::kPollIdleVisibleMs);
+
+	// Idle and offline: back off, but never past the hidden rate.
+	CHECK_EQ(kaibo::pollIntervalMs({false, true, 1}), kaibo::kPollIdleVisibleMs);
+	CHECK_EQ(kaibo::pollIntervalMs({false, true, 3}), 120 * 1000);
+	CHECK_EQ(kaibo::pollIntervalMs({false, true, 4}), 240 * 1000);
+	CHECK_EQ(kaibo::pollIntervalMs({false, true, 5}), kaibo::kPollIdleHiddenMs);
+	CHECK_EQ(kaibo::pollIntervalMs({false, true, 1000}), kaibo::kPollIdleHiddenMs);
+	CHECK_EQ(kaibo::pollIntervalMs({false, false, 1000}), kaibo::kPollIdleHiddenMs);
+
+	// A broadcast never slows down, hidden or offline.
+	CHECK_EQ(kaibo::pollIntervalMs({true, false, 0}), kaibo::kPollBroadcastingMs);
+	CHECK_EQ(kaibo::pollIntervalMs({true, true, 1000}), kaibo::kPollBroadcastingMs);
+}
+
+TEST(client_keeps_a_shared_transport_alive)
+{
+	auto transport = std::make_shared<FakeTransport>();
+	const std::weak_ptr<FakeTransport> watch = transport;
+	{
+		kaibo::BiliClient client(transport);
+		transport.reset();
+		CHECK(!watch.expired()); // a job holding the client can still send
+	}
+	CHECK(watch.expired());
+}
 
 TEST(md5_known_vectors)
 {

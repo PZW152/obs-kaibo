@@ -12,7 +12,6 @@
 #include <QDateTime>
 
 #include <algorithm>
-#include <optional>
 
 namespace kaibo {
 namespace {
@@ -108,13 +107,13 @@ bool sameRoom(const RoomInfo &a, const RoomInfo &b)
 LiveController::LiveController(QObject *parent)
 	: QObject(parent),
 	  m_transport(std::make_shared<CurlTransport>()),
-	  m_client(std::make_shared<BiliClient>(*m_transport))
+	  m_client(std::make_shared<BiliClient>(m_transport))
 {
 	CurlTransport::globalInit();
 	m_watcher = std::make_unique<obs::OutputWatcher>(
 		[this](obs::OutputEvent event) { worker::postToUi(this, [this, event] { onOutputEvent(event); }); });
 
-	m_pollTimer.setInterval(30 * 1000);
+	m_pollTimer.setInterval(kPollBroadcastingMs);
 	connect(&m_pollTimer, &QTimer::timeout, this, &LiveController::refresh);
 	m_qrTimer.setInterval(1500);
 	connect(&m_qrTimer, &QTimer::timeout, this, &LiveController::pollQr);
@@ -144,30 +143,37 @@ LiveController::~LiveController()
 
 LiveController::Phase LiveController::phase() const
 {
-	const bool roomLive = m_state.room.live;
-	// "Live" means the room is live AND OBS is actually pushing to Bilibili. OBS could
-	// be streaming to another destination while the room is open; that is not a working
-	// broadcast and must not look like one.
-	if (roomLive && m_state.obsStreaming && m_state.streamTargetIsBilibili)
-		return m_state.reconnecting ? Phase::Reconnecting : Phase::Live;
-	if (roomLive && m_state.dropped)
-		return Phase::Dropped;
-	if (roomLive)
-		return Phase::RoomOnly;
-	if (m_state.obsStreaming && m_state.streamTargetIsBilibili && m_state.auth == Auth::SignedIn)
-		return Phase::StreamOnly;
-	return Phase::Offline;
+	PhaseInput input;
+	input.signedIn = m_state.auth == Auth::SignedIn;
+	input.roomLive = m_state.room.live;
+	input.obsStreaming = m_state.obsStreaming;
+	input.streamTargetIsBilibili = m_state.streamTargetIsBilibili;
+	input.reconnecting = m_state.reconnecting;
+	input.dropped = m_state.dropped;
+	return derivePhase(input);
+}
+
+RoomEdits LiveController::pendingEdits() const
+{
+	RoomDrafts drafts;
+	drafts.title = ss(m_state.titleDraft.trimmed());
+	drafts.area = m_state.areaDraft;
+	drafts.newsLoaded = m_state.newsLoaded;
+	drafts.news = ss(m_state.newsDraft.trimmed());
+	drafts.savedNews = ss(qs(m_state.news).trimmed());
+	return diffRoom(m_state.room, drafts);
+}
+
+void LiveController::commitRoomEdits(const RoomEdits &edits)
+{
+	applyRoomEdits(edits, m_state.areas, m_state.room, m_state.news);
+	if (edits.title)
+		rememberTitle(m_state.recentTitles, *edits.title);
 }
 
 bool LiveController::hasUnsyncedChanges() const
 {
-	if (!m_state.roomLoaded)
-		return false;
-	const bool title = !m_state.titleDraft.trimmed().isEmpty() &&
-			   m_state.titleDraft.trimmed() != qs(m_state.room.title);
-	const bool area = m_state.areaDraft > 0 && m_state.areaDraft != m_state.room.areaId;
-	const bool news = m_state.newsLoaded && m_state.newsDraft.trimmed() != qs(m_state.news).trimmed();
-	return title || area || news;
+	return m_state.roomLoaded && pendingEdits().any();
 }
 
 bool LiveController::titleTooLong() const
@@ -244,9 +250,51 @@ void LiveController::updatePreflight()
 	m_state.preflight = preflight();
 }
 
+void LiveController::reschedulePoll()
+{
+	if (!m_state.offline)
+		m_offlineStreak = 0;
+	PollInput input;
+	input.broadcasting = m_state.room.live || m_state.obsStreaming || m_state.streamStarting;
+	input.dockVisible = m_dockVisible;
+	input.offlineStreak = m_offlineStreak;
+	const int interval = pollIntervalMs(input);
+	// setInterval() restarts a running timer: calling it on every state change would keep
+	// pushing the next poll back, and a busy dock would stop polling altogether.
+	if (interval != m_pollTimer.interval())
+		m_pollTimer.setInterval(interval);
+}
+
+void LiveController::setDockVisible(bool visible)
+{
+	m_dockVisible = visible;
+	reschedulePoll();
+}
+
+void LiveController::noteRequestFailure(const ApiError &error)
+{
+	m_state.offline = error.kind == ErrorKind::Network;
+	if (m_state.offline)
+		++m_offlineStreak;
+}
+
+bool LiveController::staleReply(int generation)
+{
+	if (m_shuttingDown)
+		return true;
+	if (generation == m_sessionGeneration)
+		return false;
+	// The session this reply belongs to is gone. A newer sign-in may be waiting on the
+	// busy flag this call set; a sign-out already cleared it.
+	if (m_state.auth == Auth::SignedIn)
+		finishBusyOperation();
+	return true;
+}
+
 void LiveController::emitChanged()
 {
 	updatePreflight();
+	reschedulePoll();
 	if (m_shuttingDown || m_changedTimer.isActive())
 		return;
 	m_changedTimer.start();
@@ -524,13 +572,14 @@ void LiveController::validateSession(const CookieJar &jar, bool fromLogin)
 			if (result->error) {
 				logApiFailure("validating the sign-in", "nav/room", result->error);
 				// Keep the session: most likely offline. The poll timer retries.
-				m_state.offline = result->error.kind == ErrorKind::Network;
+				noteRequestFailure(result->error);
 				if (!m_state.offline)
 					notify(describe(result->error), ToastKind::Error);
 				emitChanged();
 				return;
 			}
 			m_state.offline = false;
+			m_sessionChecked.start();
 			m_state.profile = result->profile;
 			m_state.roomId = result->roomId;
 			if (result->roomOk)
@@ -576,6 +625,8 @@ void LiveController::resetSession()
 	m_ending = false;
 	m_pendingRestore = false;
 	m_faceAuthAttempt = 0;
+	m_faceStartOutput = false;
+	m_sessionChecked.invalidate();
 	const Options options = m_state.options;
 	const auto recentAreas = m_state.recentAreas;
 	const auto recentTitles = m_state.recentTitles;
@@ -825,10 +876,13 @@ void LiveController::refresh()
 		bool wantNews = false;
 		ApiError newsError;
 		std::string news;
+		bool wantSession = false;
+		ApiError sessionError;
 		CookieJar cookies;
 	};
 	auto result = std::make_shared<Result>();
 	result->wantNews = !m_state.newsLoaded;
+	result->wantSession = !m_sessionChecked.isValid() || m_sessionChecked.hasExpired(kSessionCheckMs);
 	auto client = m_client;
 	const int64_t roomId = m_state.roomId;
 	const int generation = m_sessionGeneration;
@@ -838,6 +892,10 @@ void LiveController::refresh()
 			result->error = client->fetchRoomInfo(roomId, result->room);
 			if (!result->error && result->wantNews)
 				result->newsError = client->fetchRoomNews(roomId, result->news);
+			if (!result->error && result->wantSession) {
+				Profile profile;
+				result->sessionError = client->fetchProfile(profile);
+			}
 			result->cookies = client->cookies();
 		},
 		[this, result, generation] {
@@ -846,17 +904,21 @@ void LiveController::refresh()
 			m_refreshInFlight = false;
 			if (generation != m_sessionGeneration || m_state.busy != Busy::None)
 				return;
-			if (result->error.kind == ErrorKind::NotLoggedIn) {
-				handleSessionExpiry(result->error);
+			if (handleSessionExpiry(result->error) || handleSessionExpiry(result->sessionError)) {
 				emitChanged();
 				return;
 			}
+			if (result->wantSession && !result->error) {
+				// Any other failure says nothing about the session, but waiting the full
+				// interval anyway keeps a rate-limited nav from being asked on every poll.
+				m_sessionChecked.start();
+				logApiFailure("checking the sign-in", "nav", result->sessionError);
+			}
 			if (result->error) {
 				const bool wasOffline = m_state.offline;
-				m_state.offline = result->error.kind == ErrorKind::Network;
+				noteRequestFailure(result->error);
 				if (m_state.offline && !wasOffline)
-					obs_log(LOG_INFO, "cannot reach Bilibili; retrying every %d s",
-						m_pollTimer.interval() / 1000);
+					obs_log(LOG_INFO, "cannot reach Bilibili; the poll keeps retrying");
 				else if (!m_state.offline)
 					logApiFailure("refreshing the room", "Room/get_info", result->error);
 				emitChanged();
@@ -982,16 +1044,7 @@ void LiveController::syncRoom()
 		return;
 	}
 
-	std::optional<std::string> title;
-	std::optional<int> area;
-	std::optional<std::string> news;
-	const QString t = m_state.titleDraft.trimmed();
-	if (!t.isEmpty() && t != qs(m_state.room.title))
-		title = ss(t);
-	if (m_state.areaDraft > 0 && m_state.areaDraft != m_state.room.areaId)
-		area = m_state.areaDraft;
-	if (m_state.newsLoaded && m_state.newsDraft.trimmed() != qs(m_state.news).trimmed())
-		news = ss(m_state.newsDraft.trimmed());
+	const RoomEdits edits = pendingEdits();
 
 	m_state.busy = Busy::Syncing;
 	emitChanged();
@@ -1007,24 +1060,29 @@ void LiveController::syncRoom()
 	const int generation = m_sessionGeneration;
 	worker::run(
 		this,
-		[client, roomId, mid, title, area, news, result] {
-			result->roomError = client->updateRoom(roomId, title, area);
-			if (!result->roomError && news)
-				result->newsError = client->updateNews(roomId, mid, *news);
+		[client, roomId, mid, edits, result] {
+			result->roomError = client->updateRoom(roomId, edits.title, edits.area);
+			if (!result->roomError && edits.news)
+				result->newsError = client->updateNews(roomId, mid, *edits.news);
 			result->cookies = client->cookies();
 		},
-		[this, title, area, news, result, generation] {
-			if (m_shuttingDown)
+		[this, edits, result, generation] {
+			if (staleReply(generation))
 				return;
-			if (generation != m_sessionGeneration) {
-				if (m_state.auth == Auth::SignedIn)
-					finishBusyOperation();
-				return;
-			}
 			finishBusyOperation();
 			if (handleSessionExpiry(result->roomError) || handleSessionExpiry(result->newsError)) {
 				emitChanged();
 				return;
+			}
+			if (!result->roomError) {
+				// Title and area went through even when the announcement then failed;
+				// only the announcement stays unsaved.
+				RoomEdits saved = edits;
+				if (result->newsError)
+					saved.news.reset();
+				commitRoomEdits(saved);
+				absorbClientCookies(result->cookies);
+				persistSettings();
 			}
 			const ApiError &error = result->roomError ? result->roomError : result->newsError;
 			if (error) {
@@ -1032,22 +1090,6 @@ void LiveController::syncRoom()
 					      result->roomError ? "Room/update" : "updateRoomNews", error);
 				notify(T("Error.UpdateRoom"), ToastKind::Error, describe(error));
 			} else {
-				if (title) {
-					m_state.room.title = *title;
-					rememberTitle(m_state.recentTitles, *title);
-				}
-				if (area) {
-					m_state.room.areaId = *area;
-					if (const Area *a = findArea(m_state.areas, *area)) {
-						m_state.room.areaName = a->name;
-						m_state.room.parentAreaId = a->parentId;
-						m_state.room.parentAreaName = a->parentName;
-					}
-				}
-				if (news)
-					m_state.news = *news;
-				absorbClientCookies(result->cookies);
-				persistSettings();
 				obs_log(LOG_INFO, "room info saved");
 				notify(T("Msg.RoomSaved"), ToastKind::Ok);
 			}
@@ -1088,21 +1130,12 @@ void LiveController::goLive()
 		return;
 	}
 
-	std::optional<std::string> title;
-	std::optional<int> area;
-	std::optional<std::string> news;
-	const QString t = m_state.titleDraft.trimmed();
-	if (!t.isEmpty() && t != qs(m_state.room.title))
-		title = ss(t);
-	if (m_state.areaDraft > 0 && m_state.areaDraft != m_state.room.areaId)
-		area = m_state.areaDraft;
-	if (m_state.newsLoaded && m_state.newsDraft.trimmed() != qs(m_state.news).trimmed())
-		news = ss(m_state.newsDraft.trimmed());
+	const RoomEdits edits = pendingEdits();
 
 	m_state.busy = Busy::GoingLive;
 	emitChanged();
 	obs_log(LOG_INFO, "going live (room=%lld area=%d%s)", static_cast<long long>(m_state.roomId), m_state.areaDraft,
-		news ? ", announcement" : "");
+		edits.news ? ", announcement" : "");
 
 	struct Result {
 		ApiError syncError;
@@ -1119,26 +1152,21 @@ void LiveController::goLive()
 	const int generation = m_sessionGeneration;
 	worker::run(
 		this,
-		[client, roomId, mid, areaId, title, area, news, result] {
+		[client, roomId, mid, areaId, edits, result] {
 			// Title/area first, so viewers never see the old ones on the new broadcast.
-			result->syncError = client->updateRoom(roomId, title, area);
+			result->syncError = client->updateRoom(roomId, edits.title, edits.area);
 			if (result->syncError)
 				return;
 			// The announcement is secondary: failing to save it must not stop the
 			// broadcast, so it does not abort the start below.
-			if (news)
-				result->newsError = client->updateNews(roomId, mid, *news);
+			if (edits.news)
+				result->newsError = client->updateNews(roomId, mid, *edits.news);
 			result->error = client->startLive(roomId, areaId, result->start);
 			result->cookies = client->cookies();
 		},
-		[this, result, title, area, generation, startOutput] {
-			if (m_shuttingDown)
+		[this, result, edits, generation, startOutput] {
+			if (staleReply(generation))
 				return;
-			if (generation != m_sessionGeneration) {
-				if (m_state.auth == Auth::SignedIn)
-					finishBusyOperation();
-				return;
-			}
 			finishBusyOperation();
 			if (result->syncError) {
 				if (handleSessionExpiry(result->syncError)) {
@@ -1150,18 +1178,10 @@ void LiveController::goLive()
 				emitChanged();
 				return;
 			}
-			if (title) {
-				m_state.room.title = *title;
-				rememberTitle(m_state.recentTitles, *title);
-			}
-			if (area) {
-				m_state.room.areaId = *area;
-				if (const Area *a = findArea(m_state.areas, *area)) {
-					m_state.room.areaName = a->name;
-					m_state.room.parentAreaId = a->parentId;
-					m_state.room.parentAreaName = a->parentName;
-				}
-			}
+			RoomEdits saved = edits;
+			if (result->newsError)
+				saved.news.reset();
+			commitRoomEdits(saved);
 			absorbClientCookies(result->cookies);
 			if (result->newsError)
 				logApiFailure("saving the announcement before going live", "updateRoomNews",
@@ -1191,6 +1211,7 @@ void LiveController::handleStartLiveResult(const ApiError &error, const LiveStar
 	if (!start.faceAuthUrl.empty()) {
 		obs_log(LOG_INFO, "Bilibili asks for a face verification before this broadcast (code=%d)", error.code);
 		m_faceAuthAttempt = 0;
+		m_faceStartOutput = startOutput; // the retry finishes this same go-live
 		m_state.face = FaceAuth::Required;
 		m_state.faceAuthUrl = qs(start.faceAuthUrl);
 		m_state.faceAuthAttempt = 0;
@@ -1231,6 +1252,7 @@ void LiveController::clearFaceAuth()
 	const bool wasRetrying = m_state.face == FaceAuth::Retrying;
 	m_faceAuthTimer.stop();
 	m_faceAuthAttempt = 0;
+	m_faceStartOutput = false;
 	m_state.face = FaceAuth::None;
 	m_state.faceAuthUrl.clear();
 	m_state.faceAuthAttempt = 0;
@@ -1289,13 +1311,8 @@ void LiveController::requestFaceAuthRetry()
 			result->cookies = client->cookies();
 		},
 		[this, result, generation] {
-			if (m_shuttingDown)
+			if (staleReply(generation))
 				return;
-			if (generation != m_sessionGeneration) {
-				if (m_state.auth == Auth::SignedIn)
-					finishBusyOperation();
-				return;
-			}
 			if (m_state.face == FaceAuth::None) {
 				finishBusyOperation();
 				return; // cancelled while the request was in flight
@@ -1308,8 +1325,9 @@ void LiveController::requestFaceAuthRetry()
 			}
 			if (!result->error) {
 				absorbClientCookies(result->cookies);
+				const bool startOutput = m_faceStartOutput; // finishLiveStart() clears it
 				finishBusyOperation();
-				finishLiveStart(result->start, false);
+				finishLiveStart(result->start, startOutput);
 				return;
 			}
 			if (!result->start.faceAuthUrl.empty()) {
@@ -1434,13 +1452,8 @@ void LiveController::closeRoom()
 			result->cookies = client->cookies();
 		},
 		[this, result, generation, roomId] {
-			if (m_shuttingDown)
+			if (staleReply(generation))
 				return;
-			if (generation != m_sessionGeneration) {
-				if (m_state.auth == Auth::SignedIn)
-					finishBusyOperation();
-				return;
-			}
 			m_closeRoomPending = false;
 			finishBusyOperation();
 			if (handleSessionExpiry(result->error)) {

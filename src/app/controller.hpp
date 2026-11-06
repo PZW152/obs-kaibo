@@ -4,6 +4,7 @@
 #include "app/obs_bridge.hpp"
 #include "app/store.hpp"
 #include "core/bili_client.hpp"
+#include "core/live_state.hpp"
 #include "core/preflight.hpp"
 
 #include <QDir>
@@ -29,8 +30,7 @@ class LiveController : public QObject {
 public:
 	enum class Auth { Unknown, SignedOut, Checking, SignedIn };
 	enum class Busy { None, Syncing, GoingLive, Ending };
-	// Room state × OBS output state, as the person should understand it.
-	enum class Phase { Offline, Live, Reconnecting, RoomOnly, Dropped, StreamOnly };
+	using Phase = LivePhase;
 	enum class QrPhase { Idle, Loading, Waiting, Scanned, Expired, Failed };
 	// Bilibili's start-live check can ask for a face verification first. The person
 	// scans a code on the phone; the live API only sees that a moment later, so the
@@ -149,6 +149,8 @@ public:
 	void stopObsStream();
 
 	void setOptions(const Options &options);
+	// The poll slows down while nobody can see the dock.
+	void setDockVisible(bool visible);
 
 	static constexpr int kTitleLimit = kMaxTitleLength;
 	static constexpr int kNewsLimit = kMaxNewsLength;
@@ -162,6 +164,15 @@ signals:
 private:
 	void emitChanged();
 	void updatePreflight();
+	// Matches the poll rate to the current state; call after anything it depends on changes.
+	void reschedulePoll();
+	void noteRequestFailure(const ApiError &error);
+	// True when a worker reply must be dropped: OBS is exiting or the session it belongs
+	// to is gone. Releases the busy flag the call held.
+	bool staleReply(int generation);
+	RoomEdits pendingEdits() const;
+	// Records edits Bilibili accepted; the caller persists settings when it needs to.
+	void commitRoomEdits(const RoomEdits &edits);
 	// Signs the person out when `error` says Bilibili no longer accepts the session.
 	// Returns true when the error was handled (callers must then stop their flow).
 	bool handleSessionExpiry(const ApiError &error);
@@ -207,6 +218,7 @@ private:
 	QTimer m_changedTimer;     // coalesces bursts of state changes into one UI repaint
 	QTimer m_stopTimeoutTimer; // bounded wait for the output to stop before closing the room
 	QElapsedTimer m_qrAge;
+	QElapsedTimer m_sessionChecked; // since an authenticated call last ran
 	std::string m_qrKey;
 	int m_qrRequestId = 0; // drops a QR reply that a newer request/stop replaced
 	bool m_qrInFlight = false;
@@ -218,6 +230,9 @@ private:
 	bool m_shuttingDown = false;
 	bool m_closeRoomPending = false; // close was asked for while another call was busy
 	int m_faceAuthAttempt = 0;
+	bool m_faceStartOutput = false; // the go-live behind the verification also starts OBS
+	bool m_dockVisible = false;
+	int m_offlineStreak = 0;     // consecutive failed requests while offline
 	int m_sessionGeneration = 0; // drops stale replies after sign-out
 };
 

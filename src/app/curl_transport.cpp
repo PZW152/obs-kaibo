@@ -59,9 +59,6 @@ size_t onHeader(char *data, size_t size, size_t count, void *user)
 	return bytes;
 }
 
-struct CurlDeleter {
-	void operator()(CURL *curl) const { curl_easy_cleanup(curl); }
-};
 struct SlistDeleter {
 	void operator()(curl_slist *list) const { curl_slist_free_all(list); }
 };
@@ -74,11 +71,26 @@ void CurlTransport::globalInit()
 	std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
 }
 
+CurlTransport::~CurlTransport()
+{
+	dropHandle();
+}
+
+void CurlTransport::dropHandle()
+{
+	if (m_curl)
+		curl_easy_cleanup(m_curl);
+	m_curl = nullptr;
+}
+
 HttpResponse CurlTransport::send(const HttpRequest &request)
 {
 	HttpResponse response;
-	std::unique_ptr<CURL, CurlDeleter> curl(curl_easy_init());
-	if (!curl) {
+	if (m_curl)
+		curl_easy_reset(m_curl); // clears every option but keeps the live connections
+	else
+		m_curl = curl_easy_init();
+	if (!m_curl) {
 		response.transportError = "curl_easy_init failed";
 		return response;
 	}
@@ -88,7 +100,7 @@ HttpResponse CurlTransport::send(const HttpRequest &request)
 		raw = curl_slist_append(raw, header.c_str());
 	std::unique_ptr<curl_slist, SlistDeleter> headers(raw);
 
-	CURL *c = curl.get();
+	CURL *c = m_curl;
 	curl_easy_setopt(c, CURLOPT_URL, request.url.c_str());
 	curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers.get());
 	curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, onBody);
@@ -118,6 +130,9 @@ HttpResponse CurlTransport::send(const HttpRequest &request)
 		response.timedOut = result == CURLE_OPERATION_TIMEDOUT;
 		response.transportError = curl_easy_strerror(result);
 		response.body.clear();
+		// The cached connection may be the problem (a network change, a silent NAT drop).
+		// Start clean, so one bad socket cannot also cost the next click a full timeout.
+		dropHandle();
 		return response;
 	}
 	curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &response.status);
