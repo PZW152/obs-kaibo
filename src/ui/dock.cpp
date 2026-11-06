@@ -1272,6 +1272,7 @@ void KaiboDock::resizeEvent(QResizeEvent *event)
 void KaiboDock::showEvent(QShowEvent *event)
 {
 	QWidget::showEvent(event);
+	m_controller->setDockVisible(true);
 	if (theme().followPalette(QApplication::palette()))
 		applyTheme();
 	m_pill->setActive(true);
@@ -1290,6 +1291,7 @@ void KaiboDock::showEvent(QShowEvent *event)
 void KaiboDock::hideEvent(QHideEvent *event)
 {
 	QWidget::hideEvent(event);
+	m_controller->setDockVisible(false);
 	// Nothing ticks, blinks or re-renders while the dock is hidden.
 	m_renderTimer.stop();
 	m_elideTimer.stop();

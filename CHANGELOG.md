@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **登录失效能提前发现**：每 30 分钟用需要登录的接口确认一次会话。此前轮询只调用公开接口，登录过期后要到点开播或关播时才知道。
+  An expired sign-in is now noticed within 30 minutes; the room poll only used a public endpoint, so it surfaced when you tried to go live or end.
+- 开播时一起保存的公告不再一直显示「未保存」，下次开播也不会重复提交。
+- 保存时标题和分区成功、公告失败，现在只有公告保持未保存。
+- 人脸验证完成后，「开始推流」的意图不再丢失：房间打开后会接着开始推流。
+
+### Changed
+
+- **网络连接复用**：对同一主机的连续请求不再重新做 TCP/TLS 握手，开播和扫码轮询更快。请求失败后会丢弃连接重新建立。
+- **按需轮询**：未开播时面板可见每 60 秒、隐藏时每 5 分钟刷新一次，离线时逐步退避；直播中保持 30 秒。
+- 状态判断抽到 `core/live_state.hpp` 并补上单元测试；CI 增加 ASan + UBSan。
+
 ## 1.1.0 — 2026-11-03
 
 ### Compatibility

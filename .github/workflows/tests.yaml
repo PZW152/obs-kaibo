@@ -27,6 +27,20 @@ jobs:
       - name: Run
         run: ctest --test-dir build-tests -C Release --output-on-failure
 
+  sanitizers:
+    name: Core tests (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure
+        run: >-
+          cmake -S tests -B build-tests -DCMAKE_BUILD_TYPE=Debug
+          "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+      - name: Build
+        run: cmake --build build-tests
+      - name: Run
+        run: ctest --test-dir build-tests --output-on-failure
+
   locales:
     name: Locale files
     runs-on: ubuntu-24.04
