@@ -86,22 +86,88 @@ int main(int argc, char **argv)
 	app.setFont(font);
 	QDir().mkpath(out);
 
-	const QString qr = "https://passport.bilibili.com/h5-app/passport/login/scan?navhide=1&qrcode_key=0123456789abcdef";
+	const QString qr =
+		"https://passport.bilibili.com/h5-app/passport/login/scan?navhide=1&qrcode_key=0123456789abcdef";
 	std::vector<Scene> scenes = {
-		{"01-login", 320, [&](C::State &s, ui::KaiboDock &) { s.auth = C::Auth::SignedOut; s.qr = C::QrPhase::Waiting; s.qrUrl = qr; }},
-		{"02-login-expired", 320, [&](C::State &s, ui::KaiboDock &) { s.auth = C::Auth::SignedOut; s.qr = C::QrPhase::Expired; s.qrUrl = qr; }},
-		{"03-ready", 320, [](C::State &s, ui::KaiboDock &) { signedIn(s); }},
-		{"04-unsaved-news", 320, [](C::State &s, ui::KaiboDock &d) { signedIn(s); s.titleDraft = QString::fromUtf8("今晚上王者！"); s.newsDraft = QString::fromUtf8("每晚八点开播"); d.m_newsExpanded = true; }},
-		{"05-starting", 320, [](C::State &s, ui::KaiboDock &) { signedIn(s); s.busy = C::Busy::GoingLive; }},
-		{"06-live", 320, [](C::State &s, ui::KaiboDock &) { live(s); }},
-		{"07-dropped", 320, [](C::State &s, ui::KaiboDock &) { live(s); s.obsStreaming = false; s.dropped = true; }},
-		{"08-room-only", 320, [](C::State &s, ui::KaiboDock &) { live(s); s.obsStreaming = false; s.key.clear(); s.server.clear(); }},
-		{"09-face", 320, [&](C::State &s, ui::KaiboDock &) { signedIn(s); s.face = C::FaceAuth::Required; s.faceAuthUrl = qr; }},
-		{"10-settings", 320, [](C::State &s, ui::KaiboDock &d) { signedIn(s); d.m_settingsOpen = true; }},
-		{"11-no-room", 320, [](C::State &s, ui::KaiboDock &) { s.auth = C::Auth::SignedIn; s.profile.mid = 1; s.profile.name = "新用户"; s.newsLoaded = false; }},
-		{"12-offline", 320, [](C::State &s, ui::KaiboDock &) { signedIn(s); s.offline = true; }},
-		{"13-narrow-live", 280, [](C::State &s, ui::KaiboDock &) { live(s); s.room.title = "一个特别特别特别长的直播标题用来测试"; s.titleDraft = QString::fromUtf8("一个特别特别特别长的直播标题用来测试"); s.profile.name = "名字非常非常非常非常非常非常长的主播"; }},
-		{"14-wide-ready", 420, [](C::State &s, ui::KaiboDock &) { signedIn(s); }},
+		{"01-login", 320,
+		 [&](C::State &s, ui::KaiboDock &) {
+			 s.auth = C::Auth::SignedOut;
+			 s.qr = C::QrPhase::Waiting;
+			 s.qrUrl = qr;
+		 }},
+		{"02-login-expired", 320,
+		 [&](C::State &s, ui::KaiboDock &) {
+			 s.auth = C::Auth::SignedOut;
+			 s.qr = C::QrPhase::Expired;
+			 s.qrUrl = qr;
+		 }},
+		{"03-ready", 320,
+		 [](C::State &s, ui::KaiboDock &) {
+			 signedIn(s);
+		 }},
+		{"04-unsaved-news", 320,
+		 [](C::State &s, ui::KaiboDock &d) {
+			 signedIn(s);
+			 s.titleDraft = QString::fromUtf8("今晚上王者！");
+			 s.newsDraft = QString::fromUtf8("每晚八点开播");
+			 d.m_newsExpanded = true;
+		 }},
+		{"05-starting", 320,
+		 [](C::State &s, ui::KaiboDock &) {
+			 signedIn(s);
+			 s.busy = C::Busy::GoingLive;
+		 }},
+		{"06-live", 320,
+		 [](C::State &s, ui::KaiboDock &) {
+			 live(s);
+		 }},
+		{"07-dropped", 320,
+		 [](C::State &s, ui::KaiboDock &) {
+			 live(s);
+			 s.obsStreaming = false;
+			 s.dropped = true;
+		 }},
+		{"08-room-only", 320,
+		 [](C::State &s, ui::KaiboDock &) {
+			 live(s);
+			 s.obsStreaming = false;
+			 s.key.clear();
+			 s.server.clear();
+		 }},
+		{"09-face", 320,
+		 [&](C::State &s, ui::KaiboDock &) {
+			 signedIn(s);
+			 s.face = C::FaceAuth::Required;
+			 s.faceAuthUrl = qr;
+		 }},
+		{"10-settings", 320,
+		 [](C::State &s, ui::KaiboDock &d) {
+			 signedIn(s);
+			 d.m_settingsOpen = true;
+		 }},
+		{"11-no-room", 320,
+		 [](C::State &s, ui::KaiboDock &) {
+			 s.auth = C::Auth::SignedIn;
+			 s.profile.mid = 1;
+			 s.profile.name = "新用户";
+			 s.newsLoaded = false;
+		 }},
+		{"12-offline", 320,
+		 [](C::State &s, ui::KaiboDock &) {
+			 signedIn(s);
+			 s.offline = true;
+		 }},
+		{"13-narrow-live", 280,
+		 [](C::State &s, ui::KaiboDock &) {
+			 live(s);
+			 s.room.title = "一个特别特别特别长的直播标题用来测试";
+			 s.titleDraft = QString::fromUtf8("一个特别特别特别长的直播标题用来测试");
+			 s.profile.name = "名字非常非常非常非常非常非常长的主播";
+		 }},
+		{"14-wide-ready", 420,
+		 [](C::State &s, ui::KaiboDock &) {
+			 signedIn(s);
+		 }},
 	};
 
 	std::vector<QImage> sheet;

@@ -70,11 +70,26 @@ HttpResponse CurlTransport::send(const HttpRequest &)
 	return r;
 }
 namespace obs {
-bool captureStreamService(ServiceBackup &) { return false; }
-bool applyStreamService(const std::string &, const std::string &, std::string &) { return true; }
-bool restoreStreamService(const ServiceBackup &, std::string &) { return true; }
-bool streamingActive() { return false; }
-bool streamTargetIsBilibili() { return true; }
+bool captureStreamService(ServiceBackup &)
+{
+	return false;
+}
+bool applyStreamService(const std::string &, const std::string &, std::string &)
+{
+	return true;
+}
+bool restoreStreamService(const ServiceBackup &, std::string &)
+{
+	return true;
+}
+bool streamingActive()
+{
+	return false;
+}
+bool streamTargetIsBilibili()
+{
+	return true;
+}
 void startStreaming() {}
 void stopStreaming() {}
 void OutputWatcher::attach() {}

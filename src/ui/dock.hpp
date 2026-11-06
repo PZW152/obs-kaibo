@@ -50,6 +50,7 @@ private:
 	QWidget *buildMainPage();
 	QWidget *buildSettingsPage();
 	QWidget *buildFaceAuthCard();
+	QWidget *buildActionBar();
 
 	void scheduleRender();
 	void render();
@@ -146,6 +147,7 @@ private:
 	QLabel *m_newsHint = nullptr;
 	QLabel *m_syncHint = nullptr;
 	QPushButton *m_sync = nullptr;
+	QWidget *m_actionBar = nullptr;
 	QWidget *m_clockRow = nullptr;
 	QLabel *m_clock = nullptr;
 	QPushButton *m_goLive = nullptr;
@@ -161,6 +163,9 @@ private:
 	QPushButton *m_faceConfirm = nullptr;
 
 	QWidget *m_streamCard = nullptr;
+	QPushButton *m_streamToggle = nullptr;
+	QLabel *m_streamChevron = nullptr;
+	QWidget *m_streamBody = nullptr;
 	QLineEdit *m_server = nullptr;
 	QLineEdit *m_key = nullptr;
 	QPushButton *m_keyReveal = nullptr;

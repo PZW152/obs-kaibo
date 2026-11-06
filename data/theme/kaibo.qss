@@ -72,6 +72,11 @@
 	text-align: left; padding: 0 @space-2@; font-weight: 400; border-radius: @radius-sm@;
 	background: @surface-raised@; border: 1px solid @line-strong@;
 }
+#KaiboDock QPushButton[kbVariant="disclosure"] {
+	background: transparent; border: none; border-radius: @radius-sm@; padding: 0;
+}
+#KaiboDock QPushButton[kbVariant="disclosure"]:hover { background: @surface-raised@; }
+#KaiboDock QPushButton[kbVariant="disclosure"]:focus { border: 2px solid @focus@; }
 #KaiboDock QPushButton[kbVariant="chip"] {
 	min-height: @control-sm@; padding: 0 @space-2@; font-size: 12px; font-weight: 400;
 	border-radius: @radius-sm@; border: 1px solid @line@; background: @surface-raised@;
@@ -99,6 +104,11 @@
 #KaiboDock QPushButton#KbGoLive[kbState="end"] { background: @surface-raised@; color: @danger@; border: 1px solid @danger@; }
 #KaiboDock QPushButton#KbGoLive[kbState="end"]:hover { background: @danger-soft@; }
 #KaiboDock QPushButton#KbGoLive:disabled { background: @surface-raised@; color: @ink-faint@; border: 1px solid @line@; }
+
+/* The action bar: the status colour of the whole dock, readable at a glance. */
+#KaiboDock QFrame#KbActionBar { background: @surface@; border: none; border-top: 1px solid @line@; }
+#KaiboDock QFrame#KbActionBar[kbTally="live"] { background: @brand-soft@; border-top: 2px solid @brand@; }
+#KaiboDock QFrame#KbActionBar[kbTally="warn"] { background: @warning-soft@; border-top: 2px solid @warning@; }
 
 /* Fields */
 #KaiboDock QLineEdit, #KaiboDock QPlainTextEdit {

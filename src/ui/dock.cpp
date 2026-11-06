@@ -160,6 +160,7 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 	col->addStretch(1);
 	m_scroll->setWidget(content);
 	root->addWidget(m_scroll, 1);
+	m_actionBar = buildActionBar();
 
 	m_picker = new AreaPicker(this);
 	connect(m_picker, &AreaPicker::picked, m_controller, &LiveController::setAreaDraft);
@@ -175,6 +176,7 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 	toastLayout->addWidget(m_toast);
 	m_toastWrap->hide();
 	root->addWidget(m_toastWrap);
+	root->addWidget(m_actionBar);
 	connect(m_toast, &Toast::visibilityChanged, this, [this] {
 		if (m_toast->isVisible())
 			m_toastWrap->show();
@@ -348,17 +350,14 @@ QWidget *KaiboDock::buildMainPage()
 	auto *stats = new QHBoxLayout(m_stats);
 	stats->setContentsMargins(0, 0, 0, 0);
 	stats->setSpacing(12);
-	stats->addWidget(iconText(QStringLiteral("users"), &m_online, m_stats));
 	stats->addWidget(iconText(QStringLiteral("heart"), &m_followers, m_stats));
 	stats->addStretch(1);
 	ac->addWidget(m_stats);
-	col->addWidget(account);
+	ac->addWidget(divider(account));
 
-	// Room
-	auto *room = card(page);
-	auto *rc = new QVBoxLayout(room);
-	rc->setContentsMargins(12, 12, 12, 12);
-	rc->setSpacing(6);
+	// Room: same card, so the column reads as one form instead of a stack of boxes.
+	QFrame *room = account;
+	QVBoxLayout *rc = ac;
 	auto *titleHead = new QHBoxLayout();
 	titleHead->addWidget(label(T("Room.Title"), "strong", room));
 	titleHead->addStretch(1);
@@ -457,29 +456,116 @@ QWidget *KaiboDock::buildMainPage()
 	connect(m_sync, &QPushButton::clicked, m_controller, &LiveController::syncRoom);
 	syncRow->addWidget(m_sync, 0, Qt::AlignTop);
 	rc->addLayout(syncRow);
-	col->addWidget(room);
+	col->addWidget(account);
 
 	// Face verification card — only rendered while Bilibili asks for one.
 	m_faceCard = buildFaceAuthCard();
 	col->addWidget(m_faceCard);
 
-	// Go live
-	auto *live = new QWidget(page);
-	auto *lc = new QVBoxLayout(live);
-	lc->setContentsMargins(0, 4, 0, 0);
-	lc->setSpacing(8);
-	m_clockRow = new QWidget(live);
+	// Stream info (only after Kaibo opened the room in this session). OBS already has
+	// these values, so they stay folded away until someone needs to copy them.
+	m_streamCard = card(page);
+	auto *streamCol = new QVBoxLayout(m_streamCard);
+	streamCol->setContentsMargins(4, 4, 4, 4);
+	streamCol->setSpacing(0);
+	m_streamToggle = button({}, "disclosure", m_streamCard);
+	m_streamToggle->setCheckable(true);
+	m_streamToggle->setAccessibleName(T("Info.Title"));
+	auto *streamHead = new QHBoxLayout(m_streamToggle);
+	const int streamInset = theme().length(QStringLiteral("space-2"), 8);
+	streamHead->setContentsMargins(streamInset, 0, streamInset, 0);
+	auto *streamTitle = label(T("Info.Title"), "label", m_streamToggle);
+	streamTitle->setAttribute(Qt::WA_TransparentForMouseEvents);
+	streamHead->addWidget(streamTitle, 1);
+	m_streamChevron = new QLabel(m_streamToggle);
+	m_streamChevron->setProperty("kbIcon", QStringLiteral("chevron-down"));
+	m_streamChevron->setProperty("kbIconToken", QStringLiteral("ink-muted"));
+	m_streamChevron->setFixedSize(16, 16);
+	m_streamChevron->setScaledContents(true);
+	m_streamChevron->setAttribute(Qt::WA_TransparentForMouseEvents);
+	streamHead->addWidget(m_streamChevron);
+	streamCol->addWidget(m_streamToggle);
+	m_streamBody = new QWidget(m_streamCard);
+	auto *sc = new QVBoxLayout(m_streamBody);
+	sc->setContentsMargins(streamInset, 4, streamInset, streamInset);
+	sc->setSpacing(6);
+	m_streamBody->hide();
+	streamCol->addWidget(m_streamBody);
+	connect(m_streamToggle, &QPushButton::toggled, this, [this](bool on) {
+		m_streamBody->setVisible(on);
+		const QString icon = on ? QStringLiteral("chevron-up") : QStringLiteral("chevron-down");
+		m_streamChevron->setProperty("kbIcon", icon); // applyTheme() re-tints by this name
+		m_streamChevron->setPixmap(
+			theme().pixmap(icon, theme().color(QStringLiteral("ink-muted")), 16, devicePixelRatioF()));
+		if (!on && m_keyReveal->isChecked())
+			m_keyReveal->setChecked(false); // never leave the key showing behind a closed fold
+	});
+	sc->addWidget(label(T("Info.Server"), "strong", m_streamBody));
+	auto *serverRow = new QHBoxLayout();
+	m_server = new QLineEdit(m_streamBody);
+	m_server->setReadOnly(true);
+	m_server->setFont(theme().monoFont());
+	m_server->setAccessibleName(T("Info.Server"));
+	serverRow->addWidget(m_server, 1);
+	auto *copyServer = iconButton(QStringLiteral("copy"), T("Common.Copy"), m_streamBody);
+	connect(copyServer, &QPushButton::clicked, this, [this] { copyText(m_server->text(), T("Info.Server")); });
+	serverRow->addWidget(copyServer);
+	sc->addLayout(serverRow);
+	sc->addWidget(label(T("Info.Key"), "strong", m_streamBody));
+	auto *keyRow = new QHBoxLayout();
+	m_key = new QLineEdit(m_streamBody);
+	m_key->setReadOnly(true);
+	m_key->setEchoMode(QLineEdit::Password);
+	m_key->setFont(theme().monoFont());
+	m_key->setAccessibleName(T("Info.Key"));
+	keyRow->addWidget(m_key, 1);
+	m_keyReveal = iconButton(QStringLiteral("eye"), T("Info.Show"), m_streamBody);
+	m_keyReveal->setCheckable(true);
+	connect(m_keyReveal, &QPushButton::toggled, this, [this](bool on) {
+		m_key->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
+		m_keyReveal->setProperty("kbIcon", on ? QStringLiteral("eye-off") : QStringLiteral("eye"));
+		m_keyReveal->setIcon(
+			theme().icon(m_keyReveal->property("kbIcon").toString(), QStringLiteral("ink-muted"), 16));
+		m_keyReveal->setToolTip(on ? T("Info.Hide") : T("Info.Show"));
+	});
+	keyRow->addWidget(m_keyReveal);
+	auto *copyKey = iconButton(QStringLiteral("copy"), T("Common.Copy"), m_streamBody);
+	connect(copyKey, &QPushButton::clicked, this, [this] { copyText(m_key->text(), T("Info.Key")); });
+	keyRow->addWidget(copyKey);
+	sc->addLayout(keyRow);
+	sc->addWidget(label(T("Info.Hint"), "caption", m_streamBody));
+	col->addWidget(m_streamCard);
+
+	return page;
+}
+
+// Pinned under the scroll area, so the one button that matters is never scrolled away
+// and the broadcast's state can be read from across the room: while on air the whole bar
+// takes the brand colour, and a broadcast that needs attention turns it to warning.
+QWidget *KaiboDock::buildActionBar()
+{
+	auto *bar = new QFrame(this);
+	bar->setObjectName(QStringLiteral("KbActionBar"));
+	auto *col = new QVBoxLayout(bar);
+	const int inset = theme().length(QStringLiteral("space-3"), 12);
+	col->setContentsMargins(inset, inset, inset, inset);
+	col->setSpacing(theme().length(QStringLiteral("space-2"), 8));
+
+	m_clockRow = new QWidget(bar);
 	auto *clockRow = new QHBoxLayout(m_clockRow);
 	clockRow->setContentsMargins(2, 0, 2, 0);
-	clockRow->addWidget(label(T("Live.Duration"), "label", m_clockRow));
+	clockRow->addWidget(iconText(QStringLiteral("users"), &m_online, m_clockRow));
 	clockRow->addStretch(1);
 	m_clock = label(QStringLiteral("00:00:00"), "timer", m_clockRow);
+	m_clock->setToolTip(T("Live.Duration"));
+	m_clock->setAccessibleName(T("Live.Duration"));
 	QFont clockFont = m_clock->font();
 	clockFont.setStyleHint(QFont::Monospace);
 	m_clock->setFont(clockFont);
 	clockRow->addWidget(m_clock);
-	lc->addWidget(m_clockRow);
-	m_goLive = new QPushButton(live);
+	col->addWidget(m_clockRow);
+
+	m_goLive = new QPushButton(bar);
 	m_goLive->setObjectName(QStringLiteral("KbGoLive"));
 	m_goLive->setCursor(Qt::PointingHandCursor);
 	m_goLive->setIconSize(QSize(20, 20));
@@ -492,55 +578,11 @@ QWidget *KaiboDock::buildMainPage()
 		else
 			requestEndLive();
 	});
-	lc->addWidget(m_goLive);
-	m_goLiveHint = label({}, "caption", live);
+	col->addWidget(m_goLive);
+	m_goLiveHint = label({}, "caption", bar);
 	m_goLiveHint->setAlignment(Qt::AlignCenter);
-	lc->addWidget(m_goLiveHint);
-	col->addWidget(live);
-
-	// Stream info (only after Kaibo opened the room in this session)
-	m_streamCard = card(page);
-	auto *sc = new QVBoxLayout(m_streamCard);
-	sc->setContentsMargins(12, 12, 12, 12);
-	sc->setSpacing(6);
-	sc->addWidget(label(T("Info.Title"), "label", m_streamCard));
-	sc->addWidget(label(T("Info.Server"), "strong", m_streamCard));
-	auto *serverRow = new QHBoxLayout();
-	m_server = new QLineEdit(m_streamCard);
-	m_server->setReadOnly(true);
-	m_server->setFont(theme().monoFont());
-	m_server->setAccessibleName(T("Info.Server"));
-	serverRow->addWidget(m_server, 1);
-	auto *copyServer = iconButton(QStringLiteral("copy"), T("Common.Copy"), m_streamCard);
-	connect(copyServer, &QPushButton::clicked, this, [this] { copyText(m_server->text(), T("Info.Server")); });
-	serverRow->addWidget(copyServer);
-	sc->addLayout(serverRow);
-	sc->addWidget(label(T("Info.Key"), "strong", m_streamCard));
-	auto *keyRow = new QHBoxLayout();
-	m_key = new QLineEdit(m_streamCard);
-	m_key->setReadOnly(true);
-	m_key->setEchoMode(QLineEdit::Password);
-	m_key->setFont(theme().monoFont());
-	m_key->setAccessibleName(T("Info.Key"));
-	keyRow->addWidget(m_key, 1);
-	m_keyReveal = iconButton(QStringLiteral("eye"), T("Info.Show"), m_streamCard);
-	m_keyReveal->setCheckable(true);
-	connect(m_keyReveal, &QPushButton::toggled, this, [this](bool on) {
-		m_key->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
-		m_keyReveal->setProperty("kbIcon", on ? QStringLiteral("eye-off") : QStringLiteral("eye"));
-		m_keyReveal->setIcon(
-			theme().icon(m_keyReveal->property("kbIcon").toString(), QStringLiteral("ink-muted"), 16));
-		m_keyReveal->setToolTip(on ? T("Info.Hide") : T("Info.Show"));
-	});
-	keyRow->addWidget(m_keyReveal);
-	auto *copyKey = iconButton(QStringLiteral("copy"), T("Common.Copy"), m_streamCard);
-	connect(copyKey, &QPushButton::clicked, this, [this] { copyText(m_key->text(), T("Info.Key")); });
-	keyRow->addWidget(copyKey);
-	sc->addLayout(keyRow);
-	sc->addWidget(label(T("Info.Hint"), "caption", m_streamCard));
-	col->addWidget(m_streamCard);
-
-	return page;
+	col->addWidget(m_goLiveHint);
+	return bar;
 }
 
 // Inline face-verification prompt: the code lives in the main column next to the Go
@@ -612,9 +654,10 @@ QWidget *KaiboDock::buildSettingsPage()
 	lc->addWidget(settingRow(T("Settings.ConfirmEnd"), {}, &m_optConfirm, live));
 	for (ToggleSwitch *t : {m_optAutoStart, m_optCloseOnStop, m_optCloseOnExit, m_optRestore, m_optConfirm})
 		connect(t, &QPushButton::toggled, this, &KaiboDock::readOptions);
+	lc->addWidget(divider(live));
+	lc->addSpacing(8);
+	lc->addWidget(label(T("Settings.Hotkeys"), "caption", live));
 	col->addWidget(live);
-	auto *hotkeys = label(T("Settings.Hotkeys"), "caption", page);
-	col->addWidget(hotkeys);
 
 	auto *account = card(page);
 	auto *acc = new QVBoxLayout(account);
@@ -726,6 +769,7 @@ void KaiboDock::render()
 		page = m_mainPage;
 	for (QWidget *w : {m_loadingPage, m_loginPage, m_mainPage, m_settingsPage})
 		w->setVisible(w == page);
+	m_actionBar->setVisible(page == m_mainPage);
 	m_backButton->setVisible(m_settingsOpen);
 	m_settingsButton->setVisible(!m_settingsOpen);
 
@@ -806,7 +850,6 @@ void KaiboDock::render()
 	const UiLocale locale = uiLocale();
 	m_followers->setText(T("Stat.Fans").arg(qs(formatCount(s.room.followers, locale))));
 	m_online->setText(T("Stat.Online").arg(qs(formatCount(s.room.online, locale))));
-	m_online->parentWidget()->setVisible(s.room.live);
 	m_stats->setVisible(s.roomLoaded);
 
 	// Room fields — never overwrite what the person is typing.
@@ -875,6 +918,8 @@ void KaiboDock::render()
 	renderGoLive();
 	renderClock();
 
+	if (s.key.isEmpty() && m_streamToggle->isChecked())
+		m_streamToggle->setChecked(false); // the next broadcast's key starts folded away
 	m_streamCard->setVisible(!s.key.isEmpty());
 	if (m_server->text() != s.server)
 		m_server->setText(s.server);
@@ -1008,6 +1053,7 @@ void KaiboDock::renderGoLive()
 	const bool roomLive = s.room.live;
 	QString state = QStringLiteral("ready"), text, hint, icon;
 	bool enabled = true;
+	bool showHint = true; // the usual case repeats the button, so it stays in the tooltip
 
 	if (s.busy == Busy::GoingLive) {
 		state = QStringLiteral("busy");
@@ -1019,6 +1065,7 @@ void KaiboDock::renderGoLive()
 		state = QStringLiteral("end");
 		text = T("Button.End");
 		hint = T("Hint.Live");
+		showHint = false;
 		icon = QStringLiteral("stop");
 	} else if (s.face == FaceAuth::Required) {
 		text = T("Face.WaitingButton");
@@ -1034,6 +1081,7 @@ void KaiboDock::renderGoLive()
 		hint = phase == Phase::StreamOnly  ? T("Hint.StartWhileStreaming")
 		       : s.options.autoStartStream ? T("Hint.Start")
 						   : T("Hint.StartNoStream");
+		showHint = phase == Phase::StreamOnly || !s.options.autoStartStream;
 		icon = QStringLiteral("play");
 	}
 	// A busy controller or a pending verification means a click cannot do anything:
@@ -1067,9 +1115,17 @@ void KaiboDock::renderGoLive()
 										       : QStringLiteral("on-brand")),
 								 20, devicePixelRatioF())));
 	}
+	if (m_goLive->toolTip() != hint)
+		m_goLive->setToolTip(hint);
 	m_goLiveHint->setText(hint);
-	m_goLiveHint->setVisible(!hint.isEmpty());
+	m_goLiveHint->setVisible(showHint && !hint.isEmpty());
 	m_clockRow->setVisible(roomLive && s.liveSince > 0);
+	const bool attention = phase == Phase::Dropped || phase == Phase::RoomOnly || phase == Phase::Reconnecting ||
+			       phase == Phase::StreamOnly;
+	Theme::setProp(m_actionBar, "kbTally",
+		       attention              ? QStringLiteral("warn")
+		       : phase == Phase::Live ? QStringLiteral("live")
+					      : QStringLiteral("idle"));
 	if (roomLive && s.liveSince > 0 && isVisible()) {
 		if (!m_clockTimer.isActive())
 			m_clockTimer.start();
