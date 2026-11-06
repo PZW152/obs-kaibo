@@ -157,11 +157,14 @@ def launch(obs_root, plugin_dll, plugin_data):
                     outcome = "running" if process.poll() is None else "started"
                     if outcome == "running":
                         break
-            failed = re.search(r"[^\r\n]*obs-kaibo[^\r\n]*(failed|not loaded|incompatible)[^\r\n]*", text, re.I)
+            # OBS's own verdict on the module: Kaibo's log lines can say "failed" about a
+            # network request, which says nothing about whether the module loaded.
+            failed = re.search(r"Module '[^'\r\n]*obs-kaibo[^'\r\n]*' (not loaded|failed)[^\r\n]*", text)
             if failed:
                 outcome, detail = "failed", failed.group(0).strip()[:160]
                 break
-            outcome = "no plugin line"
+            if outcome == "no log":
+                outcome = "no plugin line"
         if process.poll() is not None:
             outcome = f"{outcome}; OBS exited ({process.returncode})"
             break
