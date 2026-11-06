@@ -22,6 +22,7 @@ using C = LiveController;
 struct Scene {
 	const char *name;
 	int width;
+	int height;
 	std::function<void(C::State &, ui::KaiboDock &)> setup;
 };
 
@@ -89,82 +90,91 @@ int main(int argc, char **argv)
 	const QString qr =
 		"https://passport.bilibili.com/h5-app/passport/login/scan?navhide=1&qrcode_key=0123456789abcdef";
 	std::vector<Scene> scenes = {
-		{"01-login", 320,
+		{"01-login", 320, 0,
 		 [&](C::State &s, ui::KaiboDock &) {
 			 s.auth = C::Auth::SignedOut;
 			 s.qr = C::QrPhase::Waiting;
 			 s.qrUrl = qr;
 		 }},
-		{"02-login-expired", 320,
+		{"02-login-expired", 320, 0,
 		 [&](C::State &s, ui::KaiboDock &) {
 			 s.auth = C::Auth::SignedOut;
 			 s.qr = C::QrPhase::Expired;
 			 s.qrUrl = qr;
 		 }},
-		{"03-ready", 320,
+		{"03-ready", 320, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 signedIn(s);
 		 }},
-		{"04-unsaved-news", 320,
+		{"04-unsaved-news", 320, 0,
 		 [](C::State &s, ui::KaiboDock &d) {
 			 signedIn(s);
 			 s.titleDraft = QString::fromUtf8("今晚上王者！");
 			 s.newsDraft = QString::fromUtf8("每晚八点开播");
 			 d.m_newsExpanded = true;
 		 }},
-		{"05-starting", 320,
+		{"05-starting", 320, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 signedIn(s);
 			 s.busy = C::Busy::GoingLive;
 		 }},
-		{"06-live", 320,
+		{"06-live", 320, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 live(s);
 		 }},
-		{"07-dropped", 320,
+		{"07-dropped", 320, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 live(s);
 			 s.obsStreaming = false;
 			 s.dropped = true;
 		 }},
-		{"08-room-only", 320,
+		{"08-room-only", 320, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 live(s);
 			 s.obsStreaming = false;
 			 s.key.clear();
 			 s.server.clear();
 		 }},
-		{"09-face", 320,
+		{"09-face", 320, 0,
 		 [&](C::State &s, ui::KaiboDock &) {
 			 signedIn(s);
 			 s.face = C::FaceAuth::Required;
 			 s.faceAuthUrl = qr;
 		 }},
-		{"10-settings", 320,
+		{"10-settings", 320, 0,
 		 [](C::State &s, ui::KaiboDock &d) {
 			 signedIn(s);
 			 d.m_settingsOpen = true;
 		 }},
-		{"11-no-room", 320,
+		{"11-no-room", 320, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 s.auth = C::Auth::SignedIn;
 			 s.profile.mid = 1;
 			 s.profile.name = "新用户";
 			 s.newsLoaded = false;
 		 }},
-		{"12-offline", 320,
+		{"12-offline", 320, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 signedIn(s);
 			 s.offline = true;
 		 }},
-		{"13-narrow-live", 280,
+		{"13-narrow-live", 280, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 live(s);
 			 s.room.title = "一个特别特别特别长的直播标题用来测试";
 			 s.titleDraft = QString::fromUtf8("一个特别特别特别长的直播标题用来测试");
 			 s.profile.name = "名字非常非常非常非常非常非常长的主播";
 		 }},
-		{"14-wide-ready", 420,
+		{"15-short-live", 320, 420,
+		 [](C::State &s, ui::KaiboDock &) {
+			 live(s);
+		 }},
+		{"16-stream-open", 320, 0,
+		 [](C::State &s, ui::KaiboDock &d) {
+			 live(s);
+			 d.m_streamToggle->setChecked(true);
+		 }},
+		{"14-wide-ready", 420, 0,
 		 [](C::State &s, ui::KaiboDock &) {
 			 signedIn(s);
 		 }},
@@ -188,8 +198,11 @@ int main(int argc, char **argv)
 		dock->updateElidedTexts();
 		// Tall enough for the whole page: size to the scroll content.
 		QWidget *content = dock->m_scroll->widget();
-		const int need = content->layout()->totalHeightForWidth(scene.width) + 60;
-		dock->resize(scene.width, std::max(420, need));
+		const int need = content->layout()->totalHeightForWidth(scene.width) + 60 +
+				 (dock->m_actionBar->isVisible() ? dock->m_actionBar->sizeHint().height() : 0);
+		dock->resize(scene.width, scene.height > 0 ? scene.height : std::max(420, need));
+		if (QWidget *focused = QApplication::focusWidget())
+			focused->clearFocus();
 		for (int i = 0; i < 4; ++i)
 			app.processEvents();
 		dock->updateElidedTexts();

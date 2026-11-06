@@ -46,6 +46,7 @@ QPushButton *button(const QString &text, const char *variant, QWidget *parent)
 	if (variant)
 		b->setProperty("kbVariant", QString::fromLatin1(variant));
 	b->setCursor(Qt::PointingHandCursor);
+	b->setFocusPolicy(Qt::TabFocus); // a click must not leave the keyboard focus ring behind
 	return b;
 }
 
@@ -59,6 +60,7 @@ QPushButton *iconButton(const QString &icon, const QString &tooltip, QWidget *pa
 	b->setToolTip(tooltip);
 	b->setAccessibleName(tooltip);
 	b->setCursor(Qt::PointingHandCursor);
+	b->setFocusPolicy(Qt::TabFocus);
 	return b;
 }
 

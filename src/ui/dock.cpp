@@ -314,6 +314,11 @@ QWidget *KaiboDock::buildMainPage()
 	m_banner = new Banner(page);
 	col->addWidget(m_banner);
 
+	// Face verification — only rendered while Bilibili asks for one. It goes first: the
+	// broadcast cannot start until the code is scanned, so it must not sit below the form.
+	m_faceCard = buildFaceAuthCard();
+	col->addWidget(m_faceCard);
+
 	// Account
 	auto *account = card(page);
 	auto *ac = new QVBoxLayout(account);
@@ -333,7 +338,12 @@ QWidget *KaiboDock::buildMainPage()
 	m_roomLabel->setWordWrap(false);
 	m_roomLabel->setMinimumSize(1, 1);
 	names->addWidget(m_name);
-	names->addWidget(m_roomLabel);
+	auto *detail = new QHBoxLayout();
+	detail->setSpacing(theme().length(QStringLiteral("space-3"), 12));
+	detail->addWidget(m_roomLabel, 1);
+	m_stats = iconText(QStringLiteral("heart"), &m_followers, account);
+	detail->addWidget(m_stats);
+	names->addLayout(detail);
 	who->addLayout(names, 1);
 	auto *openRoom = iconButton(QStringLiteral("external"), T("Header.OpenRoom"), account);
 	connect(openRoom, &QPushButton::clicked, this, [this] {
@@ -346,18 +356,15 @@ QWidget *KaiboDock::buildMainPage()
 	connect(m_moreButton, &QPushButton::clicked, this, &KaiboDock::showAccountMenu);
 	who->addWidget(m_moreButton, 0, Qt::AlignTop);
 	ac->addLayout(who);
-	m_stats = new QWidget(account);
-	auto *stats = new QHBoxLayout(m_stats);
-	stats->setContentsMargins(0, 0, 0, 0);
-	stats->setSpacing(12);
-	stats->addWidget(iconText(QStringLiteral("heart"), &m_followers, m_stats));
-	stats->addStretch(1);
-	ac->addWidget(m_stats);
-	ac->addWidget(divider(account));
 
 	// Room: same card, so the column reads as one form instead of a stack of boxes.
-	QFrame *room = account;
-	QVBoxLayout *rc = ac;
+	m_roomForm = new QWidget(account);
+	QWidget *room = m_roomForm;
+	auto *rc = new QVBoxLayout(room);
+	rc->setContentsMargins(0, 0, 0, 0);
+	rc->setSpacing(6);
+	rc->addWidget(divider(room));
+	rc->addSpacing(4);
 	auto *titleHead = new QHBoxLayout();
 	titleHead->addWidget(label(T("Room.Title"), "strong", room));
 	titleHead->addStretch(1);
@@ -456,11 +463,8 @@ QWidget *KaiboDock::buildMainPage()
 	connect(m_sync, &QPushButton::clicked, m_controller, &LiveController::syncRoom);
 	syncRow->addWidget(m_sync, 0, Qt::AlignTop);
 	rc->addLayout(syncRow);
+	ac->addWidget(room);
 	col->addWidget(account);
-
-	// Face verification card — only rendered while Bilibili asks for one.
-	m_faceCard = buildFaceAuthCard();
-	col->addWidget(m_faceCard);
 
 	// Stream info (only after Kaibo opened the room in this session). OBS already has
 	// these values, so they stay folded away until someone needs to copy them.
@@ -555,6 +559,7 @@ QWidget *KaiboDock::buildActionBar()
 	auto *clockRow = new QHBoxLayout(m_clockRow);
 	clockRow->setContentsMargins(2, 0, 2, 0);
 	clockRow->addWidget(iconText(QStringLiteral("users"), &m_online, m_clockRow));
+	m_online->setProperty("kbText", QStringLiteral("strong"));
 	clockRow->addStretch(1);
 	m_clock = label(QStringLiteral("00:00:00"), "timer", m_clockRow);
 	m_clock->setToolTip(T("Live.Duration"));
@@ -851,10 +856,14 @@ void KaiboDock::render()
 	m_followers->setText(T("Stat.Fans").arg(qs(formatCount(s.room.followers, locale))));
 	m_online->setText(T("Stat.Online").arg(qs(formatCount(s.room.online, locale))));
 	m_stats->setVisible(s.roomLoaded);
+	// Without a live room there is nothing to title; the banner says what to do instead.
+	m_roomForm->setVisible(s.roomId > 0 || s.profile.mid == 0);
 
 	// Room fields — never overwrite what the person is typing.
-	if (!m_title->hasFocus() && m_title->text() != s.titleDraft)
+	if (!m_title->hasFocus() && m_title->text() != s.titleDraft) {
 		m_title->setText(s.titleDraft);
+		m_title->setCursorPosition(0); // a long title should show its start, not its end
+	}
 	const int titleLength = static_cast<int>(utf8Length(ss(s.titleDraft.trimmed())));
 	m_titleCounter->setText(QStringLiteral("%1/%2").arg(titleLength).arg(LiveController::kTitleLimit));
 	const bool tooLong = m_controller->titleTooLong();
@@ -910,7 +919,8 @@ void KaiboDock::render()
 
 	const bool unsynced = m_controller->hasUnsyncedChanges();
 	m_sync->setEnabled(unsynced && s.busy == Busy::None && !tooLong && newsLength <= LiveController::kNewsLimit);
-	m_sync->setText(s.busy == Busy::Syncing ? T("Room.Saving") : unsynced ? T("Room.Save") : T("Room.Saved"));
+	m_sync->setText(s.busy == Busy::Syncing ? T("Room.Saving") : T("Room.Save"));
+	m_sync->setVisible(unsynced || s.busy == Busy::Syncing);
 	m_syncHint->setText(unsynced ? T("Room.Unsaved") : QString());
 
 	renderBanner();

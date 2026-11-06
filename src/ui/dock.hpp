@@ -131,6 +131,7 @@ private:
 	QLabel *m_roomLabel = nullptr;
 	QPushButton *m_moreButton = nullptr;
 	QWidget *m_stats = nullptr;
+	QWidget *m_roomForm = nullptr;
 	QLabel *m_online = nullptr;
 	QLabel *m_followers = nullptr;
 	QLineEdit *m_title = nullptr;
