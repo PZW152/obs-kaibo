@@ -18,8 +18,8 @@
   <a href="docs/troubleshooting.md">常见问题</a>
 </p>
 
-<p align="center"><img src="docs/images/dock-design.png" width="640" alt="Kaibo 面板设计稿：深色与浅色主题"></p>
-<p align="center"><sub>面板设计稿（深色 / 浅色主题，跟随 OBS 自动切换）</sub></p>
+<p align="center"><img src="docs/images/dock.png" width="640" alt="直播中的 Kaibo 面板：深色与浅色主题"></p>
+<p align="center"><sub>直播中的面板（深色 / 浅色主题，跟随 OBS 自动切换）</sub></p>
 
 ## 它做什么
 

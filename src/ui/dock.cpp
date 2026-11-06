@@ -1208,8 +1208,10 @@ void KaiboDock::updateElidedTexts()
 	};
 	// The room number matters more than the follower count: in a narrow dock the count
 	// gives way instead of squeezing the number down to a few characters.
+	const int elideMargin = 4; // apply() below keeps 2px clear; rounding takes the rest
 	const int detailWidth = m_roomLabel->fontMetrics().horizontalAdvance(m_roomLabelFull) +
-				m_stats->sizeHint().width() + theme().length(QStringLiteral("space-3"), 12);
+				m_stats->sizeHint().width() + theme().length(QStringLiteral("space-3"), 12) +
+				elideMargin;
 	m_stats->setVisible(m_controller->state().roomLoaded && detailWidth <= m_name->width());
 	apply(m_name, m_nameFull, Qt::ElideRight);
 	apply(m_roomLabel, m_roomLabelFull, Qt::ElideRight);
