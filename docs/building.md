@@ -36,7 +36,7 @@ python3 tools/check-theme.py
 
 | 平台 | 构建基线 | 说明 |
 | --- | --- | --- |
-| Windows x64 | OBS 30.0.2 + obs-deps/Qt6 2023-11-03（Qt 6.5.3） | OBS 30.x 本身要用 legacy CMake 框架构建（`OBS_CMAKE_VERSION=2.0.0`）；产物可载入 OBS 29.1–33.x |
+| Windows x64 | OBS 30.0.2 + obs-deps/Qt6 2023-11-03（Qt 6.5.3） | OBS 30.x 本身要用 legacy CMake 框架构建（`OBS_CMAKE_VERSION=2.0.0`）；产物可载入 OBS 28.0–33.x |
 | macOS universal | 见 `buildspec.json` 的平台覆盖项 | 受 Xcode 版本限制，macOS 基线高于 Windows |
 | Ubuntu 22.04 / 24.04 | 发行版仓库 / PPA 的 libobs 与 Qt6 | 不读 buildspec 的 OBS 源码版本 |
 | Flatpak | `com.obsproject.Studio` stable runtime | 与 runtime 内的 OBS 匹配 |
@@ -69,7 +69,9 @@ KB_OUT=shots QT_QPA_PLATFORM=offscreen build-preview/kaibo-ui-preview
 
 ## OBS 版本兼容性检查
 
-`tools/check-obs-compat.py` 下载官方 OBS 发布包，核对插件导入的每个符号是否都由该版本提供，再在便携模式下启动 OBS，从日志确认插件是否载入。CI 的 `OBS version compatibility` 任务对 Windows 构建产物运行它，结果写在任务摘要里。`--floor` 指定的版本及更新的版本缺少符号时，检查失败。
+`tools/check-obs-compat.py` 下载官方 OBS 发布包，核对插件导入的每个符号是否都由该版本提供，再在便携模式下启动 OBS，从日志确认插件是否载入。CI 的 `OBS version compatibility` 任务对 Windows 构建产物运行它，结果写在任务摘要里。`--floor` 指定的版本及更新的版本缺少符号、插件载入失败或 OBS 随后崩溃时，检查失败。CI 的下限是 28.0.0。
+
+构建用的 Qt 比 OBS 28 自带的新，所以不能用只有新版 Qt 才导出的函数：`QObject::setObjectName` 要改用 `setObjectId()`（`src/app/qt_compat.hpp`），也不要用 `QSettings`。这项检查会拦下这类改动。
 
 ## CI 与发布
 

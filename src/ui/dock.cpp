@@ -863,7 +863,6 @@ void KaiboDock::render()
 		m_followers->setAccessibleName(followersFull);
 	}
 	m_online->setText(T("Stat.Online").arg(qs(formatCount(s.room.online, locale))));
-	m_stats->setVisible(s.roomLoaded);
 	// Without a live room there is nothing to title; the banner says what to do instead.
 	m_roomForm->setVisible(s.roomId > 0 || s.profile.mid == 0);
 
@@ -1207,6 +1206,11 @@ void KaiboDock::updateElidedTexts()
 		if (label->text() != shown)
 			label->setText(shown);
 	};
+	// The room number matters more than the follower count: in a narrow dock the count
+	// gives way instead of squeezing the number down to a few characters.
+	const int detailWidth = m_roomLabel->fontMetrics().horizontalAdvance(m_roomLabelFull) +
+				m_stats->sizeHint().width() + theme().length(QStringLiteral("space-3"), 12);
+	m_stats->setVisible(m_controller->state().roomLoaded && detailWidth <= m_name->width());
 	apply(m_name, m_nameFull, Qt::ElideRight);
 	apply(m_roomLabel, m_roomLabelFull, Qt::ElideRight);
 	apply(m_dataPath, m_dataPathFull, Qt::ElideMiddle);

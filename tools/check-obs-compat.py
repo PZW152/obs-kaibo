@@ -6,8 +6,8 @@ imports with what that version's DLLs export, then starts OBS in portable mode a
 its log to see whether the plugin loaded.
 
 A missing import is proof the module cannot load, so it fails the check for any version
-at or above --floor. A launch is only reported: a CI machine has no real GPU, so OBS may
-stop before it loads plugins, and that says nothing about the plugin.
+at or above --floor, and so does a launch where the plugin fails to load or OBS dies after
+loading it. A launch that simply reaches no verdict is only reported.
 
     python tools/check-obs-compat.py --plugin-dir <unpacked artifact> --work <dir> \\
         --floor 29.1.3 --versions 28.0.3 29.1.3 33.0.1
@@ -32,6 +32,7 @@ import pefile
 
 RELEASES = "https://api.github.com/repos/obsproject/obs-studio/releases/tags/"
 LAUNCH_SECONDS = 75
+SETTLE_SECONDS = 10  # OBS must stay up this long after Kaibo starts
 
 
 def version_key(version):
@@ -148,11 +149,14 @@ def launch(obs_root, plugin_dll, plugin_data):
         logs = sorted((config / "logs").glob("*.txt"), key=lambda path: path.stat().st_mtime)
         if logs:
             text = logs[-1].read_text(encoding="utf-8", errors="replace")
-            hit = re.search(r"\[obs-kaibo\] (loaded[^\r\n]*)", text)
-            if hit:
+            if re.search(r"\[obs-kaibo\] loaded", text):
                 dock = re.search(r"dock 'kaibo' registered with (\S+)", text)
                 outcome, detail = "loaded", dock.group(1) if dock else ""
-                break
+                if re.search(r"\[obs-kaibo\] started", text):
+                    time.sleep(SETTLE_SECONDS)
+                    outcome = "running" if process.poll() is None else "started"
+                    if outcome == "running":
+                        break
             failed = re.search(r"[^\r\n]*obs-kaibo[^\r\n]*(failed|not loaded|incompatible)[^\r\n]*", text, re.I)
             if failed:
                 outcome, detail = "failed", failed.group(0).strip()[:160]
@@ -195,10 +199,11 @@ def main():
             for name in names:
                 print(f"{version}: {dll}: {name}")
         required = args.floor and version_key(version) >= version_key(args.floor)
-        broken = broken or (bool(required) and count > 0)
         launched, detail = ("skipped", "")
         if not args.no_launch and os.name == "nt":
             launched, detail = launch(root, plugin_dll, plugin_data)
+        crashed = launched == "failed" or (launched.startswith(("loaded", "started")) and "exited" in launched)
+        broken = broken or (bool(required) and (count > 0 or crashed))
         rows.append((version, "ok" if not count else f"{count} missing", launched, detail))
         shutil.rmtree(root, ignore_errors=True)
 

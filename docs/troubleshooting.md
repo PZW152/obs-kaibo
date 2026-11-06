@@ -4,7 +4,7 @@
 
 | 平台 | 支持的 OBS 版本 |
 | --- | --- |
-| Windows 10 / 11 x64 | OBS Studio **29.1 及以上**（已在 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.x 上验证） |
+| Windows 10 / 11 x64 | OBS Studio **28 及以上**（已在 28.0 / 28.1 / 29.0 / 29.1 / 30.0 / 30.2 / 31.1 / 32.2 / 33.0 上验证） |
 | macOS 12+ | 见 [README](../README.md) 的兼容性说明 |
 | Linux（.deb） | 与安装时发行版仓库（PPA）里的 OBS 版本一致及更新版本 |
 | Flatpak | 与 `com.obsproject.Studio` stable runtime 的 OBS 版本匹配 |

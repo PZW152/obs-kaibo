@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Compatibility
+
+- **Windows 现在支持 OBS Studio 28 及以上**：此前最低是 29.1。去掉了只有 Qt 6.4+ 才有的调用后，插件能在 OBS 28.0 到 33.0 上载入。
+  Windows now supports OBS Studio 28 and newer (previously 29.1).
+- CI 现在对每次构建下载 28.0 到 33.0 的官方 OBS，核对符号并实际启动，防止以后悄悄不再兼容旧版。
+
 ### Fixed
 
 - **登录失效能提前发现**：每 30 分钟用需要登录的接口确认一次会话。此前轮询只调用公开接口，登录过期后要到点开播或关播时才知道。

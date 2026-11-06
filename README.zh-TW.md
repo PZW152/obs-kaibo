@@ -6,7 +6,7 @@
   <a href="https://github.com/PZW152/obs-kaibo/actions/workflows/tests.yaml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/PZW152/obs-kaibo/tests.yaml?branch=main&label=tests"></a>
   <a href="https://github.com/PZW152/obs-kaibo/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/PZW152/obs-kaibo/total?color=111214"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/PZW152/obs-kaibo?color=111214"></a>
-  <img alt="OBS 29.1+" src="https://img.shields.io/badge/OBS-29.1%2B-111214">
+  <img alt="OBS 28+" src="https://img.shields.io/badge/OBS-28%2B-111214">
 </p>
 
 <p align="center"><b>在 OBS 裡一鍵開播嗶哩嗶哩。</b><br>掃碼登入 · 修改標題和分區 · 自動寫入串流設定 · 斷流提醒 · 简体 / 繁體 / English</p>
@@ -23,7 +23,7 @@ Kaibo 是 OBS Studio 的停駐面板（Dock）。登入一次之後，開播只�
 
 ## 安裝
 
-支援 **OBS Studio 29.1 以上**（Windows；已在 29.1.3 / 30.2.3 / 31.1.2 / 32.2.2 / 33.0.x 實測載入）。macOS 版本需要較新的 OBS（31.1+），Linux / Flatpak 與發行版或 runtime 的 OBS 相符，詳見 [docs/install.md](docs/install.md)。
+支援 **OBS Studio 28 以上**（Windows；已在 28.0 / 28.1 / 29.0 / 29.1 / 30.0 / 30.2 / 31.1 / 32.2 / 33.0 實測載入）。macOS 版本需要較新的 OBS（31.1+），Linux / Flatpak 與發行版或 runtime 的 OBS 相符，詳見 [docs/install.md](docs/install.md)。
 
 - **Windows**：從 [Releases](https://github.com/PZW152/obs-kaibo/releases/latest) 下載 `obs-kaibo-<版本>-windows-x64-installer.exe`，關閉 OBS 後執行。外掛會安裝到 `C:\ProgramData\obs-studio\plugins\obs-kaibo`（Steam 版 OBS 也適用）。升級時直接執行新版安裝程式，設定與登入都會保留。
 - **macOS**：安裝 `obs-kaibo-<版本>-macos-universal.pkg`。
