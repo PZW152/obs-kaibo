@@ -57,6 +57,20 @@ cmake --preset ubuntu-x86_64
 cmake --build --preset ubuntu-x86_64
 ```
 
+## 面板截图
+
+`tests/ui-preview` 用假的 OBS 和网络层渲染真实的面板，覆盖登录、未开播、直播中、断流、人脸认证、设置等状态。CI 的 `Dock screenshots` 任务会产出深色和浅色两套截图（artifact：`dock-screenshots`）。改界面时看这组图，不用打开 OBS，也不用登录账号。
+
+```bash
+cmake -S tests/ui-preview -B build-preview
+cmake --build build-preview
+KB_OUT=shots QT_QPA_PLATFORM=offscreen build-preview/kaibo-ui-preview
+```
+
+## OBS 版本兼容性检查
+
+`tools/check-obs-compat.py` 下载官方 OBS 发布包，核对插件导入的每个符号是否都由该版本提供，再在便携模式下启动 OBS，从日志确认插件是否载入。CI 的 `OBS version compatibility` 任务对 Windows 构建产物运行它，结果写在任务摘要里。`--floor` 指定的版本及更新的版本缺少符号时，检查失败。
+
 ## CI 与发布
 
 - `Unit Tests`：每次推送在 Windows、macOS、Ubuntu 上跑核心测试和语言文件检查。
