@@ -2,6 +2,7 @@
 #include "ui/dock.hpp"
 #include "app/controller.hpp"
 #include "app/i18n.hpp"
+#include "app/qt_compat.hpp"
 #include "app/secret_store.hpp"
 #include "core/face_auth.hpp"
 #include "ui/area_picker.hpp"
@@ -18,6 +19,7 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
+#include <QFile>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -27,7 +29,6 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScreen>
-#include <QSettings>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QShortcut>
@@ -114,7 +115,7 @@ ToastKind toToastKind(int kind)
 
 KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(parent), m_controller(controller)
 {
-	setObjectName(QStringLiteral("KaiboDock"));
+	setObjectId(this, QStringLiteral("KaiboDock"));
 	setAttribute(Qt::WA_StyledBackground);
 	// Load the design tokens before reading any length out of them.
 	theme().load();
@@ -127,12 +128,12 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 	root->addWidget(buildHeader());
 
 	m_scroll = new QScrollArea(this);
-	m_scroll->setObjectName(QStringLiteral("KbScroll"));
+	setObjectId(m_scroll, QStringLiteral("KbScroll"));
 	m_scroll->setWidgetResizable(true);
 	m_scroll->setFrameShape(QFrame::NoFrame);
 	m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	auto *content = new QWidget(m_scroll);
-	content->setObjectName(QStringLiteral("KbContent"));
+	setObjectId(content, QStringLiteral("KbContent"));
 	auto *col = new QVBoxLayout(content);
 	col->setContentsMargins(12, 4, 12, 12);
 	col->setSpacing(0);
@@ -227,7 +228,7 @@ KaiboDock::KaiboDock(LiveController *controller, QWidget *parent) : QWidget(pare
 QWidget *KaiboDock::buildHeader()
 {
 	auto *bar = new QWidget(this);
-	bar->setObjectName(QStringLiteral("KbHeader"));
+	setObjectId(bar, QStringLiteral("KbHeader"));
 	auto *row = new QHBoxLayout(bar);
 	row->setContentsMargins(12, 10, 12, 8);
 	row->setSpacing(8);
@@ -549,7 +550,7 @@ QWidget *KaiboDock::buildMainPage()
 QWidget *KaiboDock::buildActionBar()
 {
 	auto *bar = new QFrame(this);
-	bar->setObjectName(QStringLiteral("KbActionBar"));
+	setObjectId(bar, QStringLiteral("KbActionBar"));
 	auto *col = new QVBoxLayout(bar);
 	const int inset = theme().length(QStringLiteral("space-3"), 12);
 	col->setContentsMargins(inset, inset, inset, inset);
@@ -571,7 +572,7 @@ QWidget *KaiboDock::buildActionBar()
 	col->addWidget(m_clockRow);
 
 	m_goLive = new QPushButton(bar);
-	m_goLive->setObjectName(QStringLiteral("KbGoLive"));
+	setObjectId(m_goLive, QStringLiteral("KbGoLive"));
 	m_goLive->setCursor(Qt::PointingHandCursor);
 	m_goLive->setIconSize(QSize(20, 20));
 	connect(m_goLive, &QPushButton::clicked, this, [this] {
@@ -1249,8 +1250,10 @@ void KaiboDock::loadLayoutHintDismissed()
 	const QString directory = m_controller->storageDirectory();
 	if (directory.isEmpty())
 		return;
-	QSettings settings(QDir(directory).filePath(QStringLiteral("ui-hints.ini")), QSettings::IniFormat);
-	m_hintDismissed = settings.value(QStringLiteral("fullHeightHintDismissed"), false).toBool();
+	// Plain file access: QSettings' value()/setValue() need Qt 6.4+ (see app/qt_compat.hpp).
+	QFile file(QDir(directory).filePath(QStringLiteral("ui-hints.ini")));
+	if (file.open(QIODevice::ReadOnly))
+		m_hintDismissed = file.readAll().contains("fullHeightHintDismissed=true");
 }
 
 void KaiboDock::dismissLayoutHint()
@@ -1260,9 +1263,10 @@ void KaiboDock::dismissLayoutHint()
 	const QString directory = m_controller->storageDirectory();
 	if (directory.isEmpty())
 		return;
-	QSettings settings(QDir(directory).filePath(QStringLiteral("ui-hints.ini")), QSettings::IniFormat);
-	settings.setValue(QStringLiteral("fullHeightHintDismissed"), true);
-	settings.sync();
+	QDir().mkpath(directory);
+	QFile file(QDir(directory).filePath(QStringLiteral("ui-hints.ini")));
+	if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		file.write("[General]\nfullHeightHintDismissed=true\n");
 }
 
 QAction *KaiboDock::sideDocksAction()

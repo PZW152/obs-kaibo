@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ui/widgets.hpp"
 #include "app/i18n.hpp"
+#include "app/qt_compat.hpp"
 #include "ui/theme.hpp"
 #include "vendor/qrcodegen/qrcodegen.hpp"
 
@@ -539,7 +540,7 @@ void Banner::updateActionDirection()
 // ------------------------------------------------------------------ Toast
 Toast::Toast(QWidget *parent) : QFrame(parent)
 {
-	setObjectName(QStringLiteral("KbToast"));
+	setObjectId(this, QStringLiteral("KbToast"));
 	setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
 	auto *row = new QHBoxLayout(this);
 	row->setContentsMargins(12, 10, 12, 10);

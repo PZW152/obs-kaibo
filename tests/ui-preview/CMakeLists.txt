@@ -43,4 +43,7 @@ target_include_directories(kaibo-ui-preview PRIVATE stubs "${KAIBO_SRC}")
 target_compile_definitions(kaibo-ui-preview PRIVATE KB_DATA_DIR="${KAIBO_ROOT}/data/")
 # main.cpp pokes the controller's state directly to reach every screen.
 target_compile_options(kaibo-ui-preview PRIVATE -fno-access-control -w)
-target_link_libraries(kaibo-ui-preview PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg Threads::Threads)
+target_link_libraries(
+  kaibo-ui-preview
+  PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg Threads::Threads
+)

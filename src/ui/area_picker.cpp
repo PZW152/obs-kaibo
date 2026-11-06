@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ui/area_picker.hpp"
 #include "app/i18n.hpp"
+#include "app/qt_compat.hpp"
 #include "ui/theme.hpp"
 #include "ui/widgets.hpp"
 
@@ -22,7 +23,7 @@ constexpr int kAreaRole = Qt::UserRole + 1;
 
 AreaPicker::AreaPicker(QWidget *parent) : QFrame(parent, Qt::Popup)
 {
-	setObjectName(QStringLiteral("KbPopup"));
+	setObjectId(this, QStringLiteral("KbPopup"));
 	setAttribute(Qt::WA_StyledBackground);
 	setFixedWidth(296);
 

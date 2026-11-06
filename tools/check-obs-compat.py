@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -91,10 +92,16 @@ def imports_of(path):
 
 
 def exports_of(path):
+    # Reads the name table directly: pefile's own parser stops at 8192 exports, and
+    # Qt6Widgets has more, which would report symbols late in the alphabet as missing.
     pe = pefile.PE(str(path), fast_load=True)
-    pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_EXPORT"]])
-    directory = getattr(pe, "DIRECTORY_ENTRY_EXPORT", None)
-    names = {item.name.decode() for item in directory.symbols if item.name} if directory else set()
+    directory = pe.OPTIONAL_HEADER.DATA_DIRECTORY[0]
+    names = set()
+    if directory.VirtualAddress:
+        header = pe.get_data(directory.VirtualAddress, 40)
+        count, table = struct.unpack_from("<I", header, 24)[0], struct.unpack_from("<I", header, 32)[0]
+        for rva in struct.unpack(f"<{count}I", pe.get_data(table, count * 4)):
+            names.add(pe.get_string_at_rva(rva, 4096).decode())
     pe.close()
     return names
 
@@ -107,7 +114,7 @@ def missing_imports(plugin_imports, obs_root):
             gone = symbols - exports_of(bundled[dll])
             if gone:
                 missing[dll] = sorted(gone)
-        elif re.match(r"(qt6|obs|w32-pthreads)", dll):
+        elif re.match(r"(qt6|obs|w32-pthreads|libcurl)", dll):
             missing[dll] = ["<the DLL itself is not shipped>"]
     return missing
 
