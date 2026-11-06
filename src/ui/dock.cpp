@@ -853,7 +853,14 @@ void KaiboDock::render()
 		m_roomLabel->setAccessibleName(m_roomLabelFull);
 	}
 	const UiLocale locale = uiLocale();
-	m_followers->setText(T("Stat.Fans").arg(qs(formatCount(s.room.followers, locale))));
+	// The heart says what the number is; the words would squeeze the room number out.
+	const QString followers = qs(formatCount(s.room.followers, locale));
+	m_followers->setText(followers);
+	const QString followersFull = T("Stat.Fans").arg(followers);
+	if (m_stats->toolTip() != followersFull) {
+		m_stats->setToolTip(followersFull);
+		m_followers->setAccessibleName(followersFull);
+	}
 	m_online->setText(T("Stat.Online").arg(qs(formatCount(s.room.online, locale))));
 	m_stats->setVisible(s.roomLoaded);
 	// Without a live room there is nothing to title; the banner says what to do instead.
@@ -922,6 +929,7 @@ void KaiboDock::render()
 	m_sync->setText(s.busy == Busy::Syncing ? T("Room.Saving") : T("Room.Save"));
 	m_sync->setVisible(unsynced || s.busy == Busy::Syncing);
 	m_syncHint->setText(unsynced ? T("Room.Unsaved") : QString());
+	m_syncHint->setVisible(unsynced); // an empty label would still hold a row open
 
 	renderBanner();
 	renderFaceAuth();
