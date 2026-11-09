@@ -34,22 +34,58 @@ std::string nowMs()
 	return std::to_string(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
 }
 
-std::string faceAuthWebUrl(const std::string &uid)
+// A verification link is only usable when Bilibili minted it: the page behind it needs
+// the signed, single-use token Bilibili put in the query string. A link assembled here
+// from the uid alone loads the same page without that token, which fails with a script
+// error or a bare "system error" — and every one of those attempts still counts against
+// the account's daily verification quota. So nothing is constructed: when Bilibili gives
+// no link, the app layer says to verify in the Bilibili app instead.
+//
+// `//host/...` and `http://` forms are normalised to https; anything else (a relative
+// path, a plain token, a non-https scheme) is rejected. `bilibili://` deep links are
+// kept as they are: they do not open in a browser, but they scan.
+std::string normalizeFaceAuthUrl(const std::string &raw)
 {
-	return "https://www.bilibili.com/blackboard/live/face-auth-middle.html?source_event=400&mid=" + uid;
+	const std::string value = trim(raw);
+	if (value.empty())
+		return {};
+	if (value.rfind("bilibili://", 0) == 0)
+		return value;
+	if (value.rfind("https://", 0) == 0)
+		return value;
+	if (value.rfind("//", 0) == 0)
+		return "https:" + value;
+	if (value.rfind("http://", 0) == 0)
+		return "https://" + value.substr(7);
+	return {};
 }
 
-// 60024 normally carries `data.qr`; the spellings below are what other clients accept.
-// When nothing usable comes back, send the person to the same page 60043 uses rather
-// than showing a generic failure for something they can actually fix.
-std::string faceAuthUrlFromData(const json11::Json &data, const std::string &uid)
+// 60024 carries the link in `data`; the spellings below are the ones seen in the wild,
+// and some builds nest the same object one level down. Returns an empty string when the
+// answer holds no usable link — never a guess.
+std::string faceAuthUrlFromData(const json11::Json &data)
 {
-	for (const char *key : {"qr", "qrcode", "qrcode_url", "url"}) {
-		const std::string value = data[key].string_value();
-		if (!value.empty())
-			return value;
+	static const char *const kKeys[] = {"qr",       "qrcode",        "qrcode_url", "qr_url",
+					    "face_url", "face_auth_url", "jump_url",   "url"};
+	auto pick = [](const json11::Json &object) {
+		for (const char *key : kKeys) {
+			const std::string url = normalizeFaceAuthUrl(object[key].string_value());
+			if (!url.empty())
+				return url;
+		}
+		return std::string();
+	};
+	std::string url = pick(data);
+	if (!url.empty())
+		return url;
+	for (const char *key : {"face_auth", "face_auth_info", "auth", "qr_info", "data"}) {
+		if (!data[key].is_object())
+			continue;
+		url = pick(data[key]);
+		if (!url.empty())
+			return url;
 	}
-	return faceAuthWebUrl(uid);
+	return {};
 }
 
 ApiError networkError(const HttpResponse &response)
@@ -355,9 +391,10 @@ ApiError BiliClient::fetchProfile(Profile &profile)
 	profile.face = data["face"].string_value();
 	if (profile.mid <= 0)
 		return {ErrorKind::Parse, 0, "missing mid"};
-	// A jar without DedeUserID still carries a valid session, but the face-auth URL and
-	// some endpoints need the uid. The profile just told us what it is: keep the jar
-	// self-contained (it is what gets persisted) without changing the sign-in rule.
+	// A jar without DedeUserID still carries a valid session, but Bilibili's own web
+	// client always sends the uid and some endpoints read it. The profile just told us
+	// what it is: keep the jar self-contained (it is what gets persisted) without
+	// changing the sign-in rule.
 	if (m_cookies.uid().empty())
 		m_cookies.set("DedeUserID", std::to_string(profile.mid));
 	return ApiError::none();
@@ -494,10 +531,14 @@ ApiError BiliClient::startLive(int64_t roomId, int areaId, LiveStart &result)
 	json11::Json json;
 	error = parseEnvelope(post("https://api.live.bilibili.com/room/v1/Room/startLive", form, true), json);
 	if (error) {
-		if (error.code == codes::FaceAuthRequired)
-			result.faceAuthUrl = faceAuthUrlFromData(json["data"], m_cookies.uid());
-		else if (error.code == codes::FaceAuthRequiredAlt)
-			result.faceAuthUrl = faceAuthWebUrl(m_cookies.uid());
+		// Both codes mean the same thing: this broadcast needs a face verification
+		// first. Only the link Bilibili returned can start one, and 60043 usually
+		// returns none at all — then the dock asks for the verification to be done in
+		// the Bilibili app rather than opening a page that cannot work.
+		if (error.code == codes::FaceAuthRequired || error.code == codes::FaceAuthRequiredAlt) {
+			result.faceAuthRequired = true;
+			result.faceAuthUrl = faceAuthUrlFromData(json["data"]);
+		}
 		return error;
 	}
 
