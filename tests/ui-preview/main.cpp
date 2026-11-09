@@ -140,6 +140,15 @@ int main(int argc, char **argv)
 			 signedIn(s);
 			 s.face = C::FaceAuth::Required;
 			 s.faceAuthUrl = qr;
+			 s.faceAuthMessage = QStringLiteral("目标分区需要人脸认证");
+		 }},
+		// Bilibili asked for a verification but returned no link (60043 usually does
+		// not): no code is shown and the card says where the verification happens.
+		{"09b-face-no-link", 320, 0,
+		 [](C::State &s, ui::KaiboDock &) {
+			 signedIn(s);
+			 s.face = C::FaceAuth::Required;
+			 s.faceAuthMessage = QStringLiteral("本次开播需要身份验证");
 		 }},
 		{"10-settings", 320, 0,
 		 [](C::State &s, ui::KaiboDock &d) {

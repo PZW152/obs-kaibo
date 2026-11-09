@@ -80,7 +80,12 @@ public:
 		QString qrError;
 
 		FaceAuth face = FaceAuth::None;
-		QString faceAuthUrl;     // the code to show while the person verifies
+		// The link Bilibili returned for this verification, empty when it gave none.
+		// Kaibo never invents one: a verification page opened without Bilibili's own
+		// token cannot start a check, and the failed attempt still counts against the
+		// account's daily verification quota.
+		QString faceAuthUrl;
+		QString faceAuthMessage; // Bilibili's own wording for this verification, if any
 		int faceAuthAttempt = 0; // retries already scheduled, 0 while waiting for a scan
 
 		Options options;

@@ -1208,14 +1208,19 @@ void LiveController::handleStartLiveResult(const ApiError &error, const LiveStar
 		finishLiveStart(start, startOutput);
 		return;
 	}
-	if (!start.faceAuthUrl.empty()) {
-		obs_log(LOG_INFO, "Bilibili asks for a face verification before this broadcast (code=%d)", error.code);
+	if (start.faceAuthRequired) {
+		obs_log(LOG_INFO, "Bilibili asks for a face verification before this broadcast (code=%d, link=%s)",
+			error.code, start.faceAuthUrl.empty() ? "none" : "yes");
 		m_faceAuthAttempt = 0;
 		m_faceStartOutput = startOutput; // the retry finishes this same go-live
 		m_state.face = FaceAuth::Required;
 		m_state.faceAuthUrl = qs(start.faceAuthUrl);
+		m_state.faceAuthMessage = QString::fromStdString(error.message).trimmed();
 		m_state.faceAuthAttempt = 0;
-		notify(T("Msg.FaceAuthNeeded"), ToastKind::Info);
+		// Without a link from Bilibili there is nothing to scan here: the verification
+		// has to happen in the Bilibili app, so say that instead of promising a code.
+		notify(start.faceAuthUrl.empty() ? T("Msg.FaceAuthNeededInApp") : T("Msg.FaceAuthNeeded"),
+		       ToastKind::Info);
 	} else {
 		logApiFailure("going live", "Room/startLive", error);
 		notify(T("Error.StartLive"), ToastKind::Error, describe(error));
@@ -1255,6 +1260,7 @@ void LiveController::clearFaceAuth()
 	m_faceStartOutput = false;
 	m_state.face = FaceAuth::None;
 	m_state.faceAuthUrl.clear();
+	m_state.faceAuthMessage.clear();
 	m_state.faceAuthAttempt = 0;
 	if (wasRetrying && m_state.busy == Busy::GoingLive)
 		finishBusyOperation();
@@ -1330,8 +1336,13 @@ void LiveController::requestFaceAuthRetry()
 				finishLiveStart(result->start, startOutput);
 				return;
 			}
-			if (!result->start.faceAuthUrl.empty()) {
-				// Keep the same code on screen; only the message changes.
+			if (result->start.faceAuthRequired) {
+				// The code already on screen stays: Bilibili mints a fresh one on
+				// every attempt, and swapping it mid-retry would ask for a second
+				// scan — which is exactly what burns the daily verification quota.
+				// A link is only taken when there was none to show before.
+				if (m_state.faceAuthUrl.isEmpty() && !result->start.faceAuthUrl.empty())
+					m_state.faceAuthUrl = qs(result->start.faceAuthUrl);
 				retryFaceAuth();
 				return;
 			}

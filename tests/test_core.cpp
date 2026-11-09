@@ -457,13 +457,18 @@ TEST(start_live_success_and_face_auth)
 	LiveStart face;
 	auto e = client.startLive(100, 86, face);
 	CHECK(e.code == codes::FaceAuthRequired);
+	CHECK(face.faceAuthRequired);
 	CHECK_EQ(face.faceAuthUrl, "https://face/qr");
 
+	// 60043 usually carries no link. The answer still means "verify first", but no
+	// address is invented for it: an unsigned verification page cannot verify anyone
+	// and the attempt would still spend one of the account's daily verifications.
 	http.push(200, R"({"code":0,"data":{"build":9000,"curr_version":"7.10.0"}})");
 	http.push(200, R"({"code":60043,"message":"需要人脸认证"})");
 	LiveStart face2;
 	client.startLive(100, 86, face2);
-	CHECK(face2.faceAuthUrl.find("mid=77") != std::string::npos);
+	CHECK(face2.faceAuthRequired);
+	CHECK(face2.faceAuthUrl.empty());
 
 	BiliClient anonymous(http);
 	CHECK(anonymous.startLive(100, 86, face2).kind == ErrorKind::NotLoggedIn);
@@ -695,7 +700,7 @@ TEST(start_live_uses_app_identity_and_millisecond_ts)
 	CHECK(!hasHeader(startRequest, "Referer:"));
 }
 
-TEST(start_live_face_auth_url_fallbacks)
+TEST(start_live_face_auth_url_is_never_invented)
 {
 	FakeTransport http;
 	BiliClient client(http);
@@ -705,15 +710,31 @@ TEST(start_live_face_auth_url_fallbacks)
 		http.push(200, R"({"code":0,"data":{"build":9,"curr_version":"7.0"}})");
 		http.push(200, response);
 		client.startLive(1, 2, start);
+		CHECK(start.faceAuthRequired);
 		return start.faceAuthUrl;
 	};
+	// The spellings seen in the wild, including one nesting level.
 	CHECK_EQ(faceAuth(R"({"code":60024,"message":"need face","data":{"qr":"https://face/qr"}})"),
 		 "https://face/qr");
 	CHECK_EQ(faceAuth(R"({"code":60024,"message":"need face","data":{"qrcode_url":"https://face/q2"}})"),
 		 "https://face/q2");
-	const std::string fallback = faceAuth(R"({"code":60024,"message":"need face","data":{}})");
-	CHECK(fallback.find("face-auth-middle.html") != std::string::npos);
-	CHECK(fallback.find("mid=4242") != std::string::npos);
+	CHECK_EQ(faceAuth(R"({"code":60024,"message":"x","data":{"face_auth":{"jump_url":"https://face/q3"}}})"),
+		 "https://face/q3");
+	// Protocol-relative and http links are normalised to https.
+	CHECK_EQ(faceAuth(R"({"code":60024,"message":"x","data":{"qr":"//face.bilibili.com/q"}})"),
+		 "https://face.bilibili.com/q");
+	CHECK_EQ(faceAuth(R"({"code":60024,"message":"x","data":{"qr":"http://face.bilibili.com/q"}})"),
+		 "https://face.bilibili.com/q");
+	// A deep link scans even though it does not open in a browser.
+	CHECK_EQ(faceAuth(R"({"code":60024,"message":"x","data":{"qr":"bilibili://live/face"}})"),
+		 "bilibili://live/face");
+	// Nothing usable: no guessed page, so the dock can say where to verify instead.
+	CHECK(faceAuth(R"({"code":60024,"message":"need face","data":{}})").empty());
+	CHECK(faceAuth(R"({"code":60024,"message":"need face","data":{"qr":""}})").empty());
+	CHECK(faceAuth(R"({"code":60024,"message":"need face","data":{"qr":"   "}})").empty());
+	CHECK(faceAuth(R"({"code":60024,"message":"need face","data":{"qr":"ftp://face/q"}})").empty());
+	CHECK(faceAuth(R"({"code":60024,"message":"need face","data":{"qr":"/p/face"}})").empty());
+	CHECK(faceAuth(R"J({"code":60024,"message":"need face","data":{"qr":"javascript:alert(1)"}})J").empty());
 }
 
 TEST(api_responses_absorb_set_cookie)
@@ -877,12 +898,8 @@ TEST(profile_fills_missing_device_uid)
 	CHECK(!client.fetchProfile(profile));
 	CHECK_EQ(client.cookies().uid(), "4242");
 
-	// With the uid filled in, the 60043 face-auth page can name the account.
-	http.push(200, R"({"code":0,"data":{"build":9,"curr_version":"7.0"}})");
-	http.push(200, R"({"code":60043,"message":"need face"})");
-	LiveStart start;
-	client.startLive(1, 2, start);
-	CHECK(start.faceAuthUrl.find("mid=4242") != std::string::npos);
+	// The uid lands in the cookie jar that gets persisted, so a reload keeps it.
+	CHECK(client.cookies().header().find("DedeUserID=4242") != std::string::npos);
 }
 
 TEST(qr_login_keeps_device_identity)

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **人脸认证不再把人带到一个打不开的认证页**：此前 B 站没有在开播响应里返回认证链接时（60043 一直如此，60024 也可能），Kaibo 会自己拼一个 `face-auth-middle.html?source_event=400&mid=…` 地址。那个地址缺少 B 站签发的一次性参数，页面加载就失败，表现为「系统错误」或 `Cannot read properties of undefined (reading 'code')`；而**每试一次仍会占用账号当天的人脸认证提交次数**，试几次就会提示「单日提交验证达到上限」。现在认证链接只取 B 站真正返回的那个：拿不到就不显示二维码，也不显示「在浏览器中打开」，改为直接说明在手机「哔哩哔哩」App 或官方直播姬里完成认证，然后点「已完成认证，重试开播」。
+  The face-verification link is now only ever the one Bilibili returned. Kaibo used to assemble a verification page URL when Bilibili returned none (60043 always, 60024 sometimes); that page cannot start a verification — it fails with a script error or "system error" — and each attempt still counted against the account's daily verification quota. With no link, the dock now says where to verify instead of showing a code that cannot work.
+- 认证链接解析更宽：`qr` / `qrcode` / `qrcode_url` / `qr_url` / `face_url` / `face_auth_url` / `jump_url` / `url`，以及嵌套一层的同名字段；`//host/…` 与 `http://` 统一升到 https，`bilibili://` 深链保留（可扫但不在浏览器打开），其他形式（相对路径、裸 token、非 http(s) 协议）一律当作「没有链接」。
+- 面板会显示 B 站对这次认证的原话（例如「目标分区需要人脸认证」），不再只有插件自己的措辞。
+- 重试全部失败后的提示改为说明 B 站的单日提交上限，并建议先在手机 App 完成认证，而不是建议继续重试。
+
 ## 1.2.0 — 2026-11-06
 
 ### Compatibility

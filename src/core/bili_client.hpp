@@ -61,7 +61,13 @@ struct RoomInfo {
 struct LiveStart {
 	std::string server;
 	std::string key;
-	std::string faceAuthUrl; // set when Bilibili requires face verification first
+	// True when Bilibili answered 60024/60043: this broadcast needs a face verification
+	// first. `faceAuthUrl` is the link Bilibili returned for it, and is empty whenever
+	// the answer carried none — it is never filled in with a guessed address, because a
+	// verification page opened without Bilibili's own token cannot start a check and the
+	// failed attempt still counts against the account's daily verification quota.
+	bool faceAuthRequired = false;
+	std::string faceAuthUrl;
 };
 
 // Error codes the UI reacts to specifically.

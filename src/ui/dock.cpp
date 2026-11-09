@@ -606,6 +606,9 @@ QWidget *KaiboDock::buildFaceAuthCard()
 	col->addWidget(m_faceHeading);
 	m_faceHint = label(T("Face.Hint"), "caption", c);
 	m_faceHint->setAlignment(Qt::AlignCenter);
+	// The hint can carry Bilibili's own wording for the verification; QLabel would
+	// otherwise sniff markup in it and render server text as rich text.
+	m_faceHint->setTextFormat(Qt::PlainText);
 	col->addWidget(m_faceHint);
 	m_faceQr = new QrView(c);
 	m_faceQr->setAccessibleName(T("Face.QrAccessible"));
@@ -1055,11 +1058,22 @@ void KaiboDock::renderFaceAuth()
 	if (!visible)
 		return;
 	const bool retrying = s.face == FaceAuth::Retrying;
+	// Bilibili does not always hand back a link for the verification — 60043 usually
+	// carries none. There is nothing to scan then, so the card shows no code at all
+	// rather than a guessed address that loads a page which cannot verify anyone.
+	const bool hasLink = !s.faceAuthUrl.isEmpty();
+	m_faceQr->setVisible(hasLink);
 	m_faceQr->setPayload(s.faceAuthUrl);
 	m_faceQr->setOverlay(QrView::Overlay::None);
+	// A bilibili:// deep link scans but does not open in a browser.
+	m_faceBrowser->setVisible(s.faceAuthUrl.startsWith(QStringLiteral("https://")));
 	m_faceHeading->setText(retrying ? T("Face.HeadingRetry") : T("Face.Heading"));
-	m_faceHint->setText(retrying ? T("Face.RetryAttempt").arg(s.faceAuthAttempt).arg(kFaceAuthMaxRetries)
-				     : T("Face.Hint"));
+	QString hint = retrying  ? T("Face.RetryAttempt").arg(s.faceAuthAttempt).arg(kFaceAuthMaxRetries)
+		       : hasLink ? T("Face.Hint")
+				 : T("Face.HintNoLink");
+	if (!retrying && !s.faceAuthMessage.isEmpty())
+		hint += QStringLiteral("\n") + s.faceAuthMessage;
+	m_faceHint->setText(hint);
 	m_faceConfirm->setEnabled(!retrying);
 	m_faceCancel->setEnabled(!retrying);
 }
@@ -1087,7 +1101,7 @@ void KaiboDock::renderGoLive()
 		icon = QStringLiteral("stop");
 	} else if (s.face == FaceAuth::Required) {
 		text = T("Face.WaitingButton");
-		hint = T("Face.WaitingHint");
+		hint = s.faceAuthUrl.isEmpty() ? T("Face.WaitingHintNoLink") : T("Face.WaitingHint");
 	} else if (s.roomId <= 0) {
 		enabled = false;
 		text = T("Status.NoRoom");
