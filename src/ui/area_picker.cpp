@@ -6,10 +6,13 @@
 #include "ui/widgets.hpp"
 
 #include <QApplication>
+#include <QHBoxLayout>
+#include <QHideEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QScreen>
 #include <QVBoxLayout>
@@ -21,8 +24,14 @@ namespace {
 constexpr int kAreaRole = Qt::UserRole + 1;
 }
 
-AreaPicker::AreaPicker(QWidget *parent) : QFrame(parent, Qt::Popup)
+AreaPicker::AreaPicker(QWidget *parent) : QFrame(parent)
 {
+	// Qt::Popup maps to a WS_POPUP window on Windows, and the system never routes
+	// IME composition to those, so the search field silently refused CJK input.
+	// A tool window is an ordinary top-level window and does get IME; the popup
+	// behaviours (close on outside click, on Esc, on app deactivate) are restored
+	// in open() and eventFilter().
+	setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
 	setObjectId(this, QStringLiteral("KbPopup"));
 	setAttribute(Qt::WA_StyledBackground);
 	setFixedWidth(296);
@@ -31,18 +40,41 @@ AreaPicker::AreaPicker(QWidget *parent) : QFrame(parent, Qt::Popup)
 	col->setContentsMargins(8, 8, 8, 8);
 	col->setSpacing(8);
 
-	m_search = new QLineEdit(this);
+	// QLineEdit::addAction places its icon against the line edit's own contents
+	// rect, which ignores the QSS min-height, so the glyph sat well below the
+	// text baseline. Lay the icon out ourselves so it centres on the field.
+	auto *searchBox = new QFrame(this);
+	setObjectId(searchBox, QStringLiteral("KbSearch"));
+	// Fixed vertical policy: when the result list hides itself (no matches) the
+	// layout redistributes the freed space, and a Preferred frame would be
+	// stretched into a tall box, dragging the recent row out of place.
+	searchBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+	searchBox->setFixedHeight(38);
+	auto *searchRow = new QHBoxLayout(searchBox);
+	searchRow->setContentsMargins(10, 0, 8, 0);
+	searchRow->setSpacing(6);
+	m_searchIcon = new QLabel(searchBox);
+	m_searchIcon->setFixedSize(16, 16);
+	m_searchIcon->setPixmap(Theme::instance().pixmap(QStringLiteral("search"),
+							 Theme::instance().color(QStringLiteral("ink-muted")), 16,
+							 devicePixelRatioF()));
+	m_searchIcon->setAttribute(Qt::WA_TransparentForMouseEvents);
+	searchRow->addWidget(m_searchIcon, 0, Qt::AlignVCenter);
+
+	m_search = new QLineEdit(searchBox);
 	m_search->setPlaceholderText(T("Area.Search"));
 	m_search->setClearButtonEnabled(true);
-	m_search->addAction(Theme::instance().icon(QStringLiteral("search"), QStringLiteral("ink-muted"), 16),
-			    QLineEdit::LeadingPosition);
+	m_search->setFrame(false);
 	m_search->setAccessibleName(T("Area.Search"));
 	m_search->installEventFilter(this);
-	col->addWidget(m_search);
+	searchRow->addWidget(m_search, 1);
+	col->addWidget(searchBox);
 
 	m_recentLabel = new QLabel(T("Area.Recent"), this);
+	m_recentLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 	col->addWidget(m_recentLabel);
 	m_recentBox = new QWidget(this);
+	m_recentBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 	m_recentFlow = new FlowLayout(m_recentBox, 6);
 	col->addWidget(m_recentBox);
 
@@ -89,6 +121,7 @@ void AreaPicker::open(QWidget *anchor, const std::vector<AreaGroup> &groups, con
 	m_recent = recent;
 	m_current = current;
 	m_loading = loading;
+	m_anchor = anchor;
 	setStyleSheet(Theme::instance().styleSheet());
 	m_search->clear();
 	rebuildRecent();
@@ -103,7 +136,11 @@ void AreaPicker::open(QWidget *anchor, const std::vector<AreaGroup> &groups, con
 		pos.setX((std::min)(pos.x(), area.right() - width()));
 	}
 	move(pos);
+	if (QApplication *app = qobject_cast<QApplication *>(QCoreApplication::instance()))
+		app->installEventFilter(this);
 	show();
+	raise();
+	activateWindow();
 	m_search->setFocus();
 }
 
@@ -129,6 +166,9 @@ bool AreaPicker::needsUpdate(const std::vector<AreaGroup> &groups, const std::ve
 void AreaPicker::refreshTheme()
 {
 	setStyleSheet(Theme::instance().styleSheet());
+	m_searchIcon->setPixmap(Theme::instance().pixmap(QStringLiteral("search"),
+							 Theme::instance().color(QStringLiteral("ink-muted")), 16,
+							 devicePixelRatioF()));
 	if (!isVisible())
 		return;
 	rebuildRecent();
@@ -219,8 +259,27 @@ void AreaPicker::choose(int areaId)
 
 bool AreaPicker::eventFilter(QObject *watched, QEvent *event)
 {
+	// Stands in for the dismissal behaviour a Qt::Popup window gets for free.
+	if (isVisible()) {
+		if (event->type() == QEvent::MouseButtonPress) {
+			auto *mouse = static_cast<QMouseEvent *>(event);
+			const QPoint global = mouse ? mouse->globalPosition().toPoint() : QPoint();
+			// A press on the anchor button must not dismiss the picker here: the
+			// button's own clicked handler toggles it on release, and hiding on
+			// press made the picker blink shut and reopen.
+			const bool onAnchor = m_anchor && m_anchor->rect().contains(m_anchor->mapFromGlobal(global));
+			if (mouse && !onAnchor && !frameGeometry().contains(global))
+				hide();
+		} else if (event->type() == QEvent::ApplicationDeactivate) {
+			hide();
+		}
+	}
 	if (watched == m_search && event->type() == QEvent::KeyPress) {
 		auto *key = static_cast<QKeyEvent *>(event);
+		if (key->key() == Qt::Key_Escape) {
+			hide();
+			return true;
+		}
 		if (key->key() == Qt::Key_Down || key->key() == Qt::Key_Up) {
 			// Move through selectable rows without leaving the search field.
 			int row = m_list->currentRow();
@@ -248,6 +307,13 @@ bool AreaPicker::eventFilter(QObject *watched, QEvent *event)
 		}
 	}
 	return QFrame::eventFilter(watched, event);
+}
+
+void AreaPicker::hideEvent(QHideEvent *event)
+{
+	if (QApplication *app = qobject_cast<QApplication *>(QCoreApplication::instance()))
+		app->removeEventFilter(this);
+	QFrame::hideEvent(event);
 }
 
 } // namespace kaibo::ui

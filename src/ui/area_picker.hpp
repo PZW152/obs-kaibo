@@ -41,6 +41,7 @@ signals:
 
 protected:
 	bool eventFilter(QObject *watched, QEvent *event) override;
+	void hideEvent(QHideEvent *event) override;
 
 private:
 	void rebuildList();
@@ -48,6 +49,8 @@ private:
 	void choose(int areaId);
 
 	QLineEdit *m_search;
+	QLabel *m_searchIcon;
+	QWidget *m_anchor = nullptr;
 	QLabel *m_recentLabel;
 	QWidget *m_recentBox;
 	FlowLayout *m_recentFlow;

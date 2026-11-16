@@ -1438,6 +1438,12 @@ void KaiboDock::requestEndLive()
 
 void KaiboDock::openAreaPicker()
 {
+	// The picker is now a tool window rather than a Qt::Popup, so it no longer
+	// dismisses itself when its own anchor button is clicked; toggle here.
+	if (m_picker->isVisible()) {
+		m_picker->hide();
+		return;
+	}
 	m_controller->ensureAreas();
 	const auto &s = m_controller->state();
 	m_picker->open(m_areaButton, s.areas, s.recentAreas, s.areaDraft, s.areasLoading);
