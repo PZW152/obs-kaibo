@@ -85,6 +85,14 @@ std::string faceAuthUrlFromData(const json11::Json &data)
 		if (!url.empty())
 			return url;
 	}
+	// 60043 carries no link at all. Bilibili's own client opens the verification page
+	// from the risk voucher in `risk_extra`; without it the dock can only point at the
+	// app, which has no entry point for this flow.
+	const std::string voucher = data["risk_extra"]["v_voucher"].string_value();
+	if (!voucher.empty())
+		return "https://live.bilibili.com/p/html/bilili-page-face-auth/index.html"
+		       "?is_live_webview=1&app_common=open&pc_ui=500,428,17181a,2&v_voucher=" +
+		       voucher;
 	return {};
 }
 

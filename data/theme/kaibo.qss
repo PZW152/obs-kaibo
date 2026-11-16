@@ -85,7 +85,7 @@
 /* ToggleSwitch paints itself (track, knob, focus ring); keep the generic button
    chrome from drawing behind it. */
 #KaiboDock QPushButton[kbSwitch="true"] {
-	min-height: 0px; min-width: 0px; padding: 0; border: none;
+	min-height: 0px; max-height: 20px; min-width: 0px; max-width: 34px; padding: 0; border: none;
 	background: transparent; border-radius: @radius-pill@;
 }
 #KaiboDock QPushButton[kbSwitch="true"]:hover { background: transparent; border: none; }
@@ -133,6 +133,13 @@
 /* Popups and menus (children of the dock inherit this sheet) */
 QFrame#KbPopup { background: @surface@; border: 1px solid @line-strong@; border-radius: @radius-md@; }
 QFrame#KbPopup QLabel { color: @ink-muted@; font-size: 11px; font-weight: 600; background: transparent; }
+QFrame#KbPopup QFrame#KbSearch {
+	min-height: @control-md@; padding: 0; border-radius: @radius-sm@; border: 2px solid @focus@;
+	background: @surface-raised@;
+}
+QFrame#KbPopup QFrame#KbSearch QLineEdit {
+	min-height: 0; padding: 0; border: none; background: transparent; color: @ink@; font-size: 13px;
+}
 QFrame#KbPopup QLineEdit {
 	min-height: @control-md@; padding: 0 @space-2@; border-radius: @radius-sm@; border: 2px solid @focus@;
 	background: @surface-raised@; color: @ink@; font-size: 13px;

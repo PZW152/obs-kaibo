@@ -25,7 +25,6 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMenu>
-#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScreen>
@@ -109,6 +108,36 @@ ToastKind toToastKind(int kind)
 		break;
 	}
 	return ToastKind::Info;
+}
+
+// The dock stylesheet sizes QPushButton (min-height), but QMessageBox measures its
+// frame with the default style and ends up clipping the button row. Lay the
+// confirmation out ourselves so the dialog is sized from its own contents.
+bool confirmDialog(QWidget *parent, const QString &title, const QString &text, const QString &confirmLabel,
+		   const QString &cancelLabel)
+{
+	QDialog dlg(parent);
+	dlg.setWindowTitle(title);
+	auto *col = new QVBoxLayout(&dlg);
+	col->setContentsMargins(24, 20, 24, 20);
+	col->setSpacing(16);
+	auto *body = new QLabel(text, &dlg);
+	body->setWordWrap(true);
+	body->setTextFormat(Qt::PlainText);
+	col->addWidget(body);
+	auto *row = new QHBoxLayout();
+	row->addStretch(1);
+	auto *cancel = new QPushButton(cancelLabel, &dlg);
+	cancel->setProperty("kbVariant", QStringLiteral("ghost"));
+	auto *ok = new QPushButton(confirmLabel, &dlg);
+	ok->setProperty("kbVariant", QStringLiteral("danger"));
+	row->addWidget(ok);
+	row->addWidget(cancel);
+	col->addLayout(row);
+	QObject::connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+	QObject::connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
+	cancel->setDefault(true);
+	return dlg.exec() == QDialog::Accepted;
 }
 
 } // namespace
@@ -681,9 +710,8 @@ QWidget *KaiboDock::buildSettingsPage()
 	m_signOut->setProperty("kbIconToken", QStringLiteral("danger"));
 	connect(m_signOut, &QPushButton::clicked, this, [this] {
 		const bool live = m_controller->state().room.live;
-		const auto answer = QMessageBox::question(this, T("Menu.Logout"),
-							  live ? T("Confirm.LogoutLive") : T("Confirm.LogoutText"));
-		if (answer == QMessageBox::Yes)
+		if (confirmDialog(this, T("Menu.Logout"), live ? T("Confirm.LogoutLive") : T("Confirm.LogoutText"),
+				  T("Menu.Logout"), T("Common.Cancel")))
 			m_controller->signOut();
 	});
 	acc->addWidget(m_signOut, 0, Qt::AlignLeft);
@@ -1423,14 +1451,8 @@ void KaiboDock::requestEndLive()
 	if (!s.room.live || s.busy != Busy::None)
 		return;
 	if (s.options.confirmEnd) {
-		QMessageBox box(QMessageBox::Question, T("Confirm.EndTitle"), T("Confirm.EndText"),
-				QMessageBox::NoButton, this);
-		QPushButton *end = box.addButton(T("Button.End"), QMessageBox::DestructiveRole);
-		QPushButton *cancel = box.addButton(T("Common.Cancel"), QMessageBox::RejectRole);
-		box.setDefaultButton(cancel); // Enter must not end the broadcast
-		box.setEscapeButton(cancel);
-		box.exec();
-		if (box.clickedButton() != end)
+		if (!confirmDialog(this, T("Confirm.EndTitle"), T("Confirm.EndText"), T("Button.End"),
+				   T("Common.Cancel")))
 			return;
 	}
 	m_controller->endLive();
@@ -1438,6 +1460,12 @@ void KaiboDock::requestEndLive()
 
 void KaiboDock::openAreaPicker()
 {
+	// The picker is now a tool window rather than a Qt::Popup, so it no longer
+	// dismisses itself when its own anchor button is clicked; toggle here.
+	if (m_picker->isVisible()) {
+		m_picker->hide();
+		return;
+	}
 	m_controller->ensureAreas();
 	const auto &s = m_controller->state();
 	m_picker->open(m_areaButton, s.areas, s.recentAreas, s.areaDraft, s.areasLoading);
@@ -1509,15 +1537,9 @@ void KaiboDock::confirmDeleteData()
 {
 	const QString folder = m_controller->storageDirectory();
 	const bool live = m_controller->state().room.live;
-	QMessageBox box(QMessageBox::Warning, T("Settings.DeleteData"),
-			(live ? T("Confirm.DeleteDataLive") : T("Confirm.DeleteData")).arg(folder),
-			QMessageBox::NoButton, this);
-	QPushButton *wipe = box.addButton(T("Settings.DeleteData"), QMessageBox::DestructiveRole);
-	QPushButton *cancel = box.addButton(T("Common.Cancel"), QMessageBox::RejectRole);
-	box.setDefaultButton(cancel); // the destructive choice must never be the default
-	box.setEscapeButton(cancel);
-	box.exec();
-	if (box.clickedButton() != wipe)
+	if (!confirmDialog(this, T("Settings.DeleteData"),
+			   (live ? T("Confirm.DeleteDataLive") : T("Confirm.DeleteData")).arg(folder),
+			   T("Settings.DeleteData"), T("Common.Cancel")))
 		return;
 	QString error;
 	if (m_controller->deleteAllData(error))

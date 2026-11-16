@@ -105,9 +105,11 @@ class ToggleSwitch : public QPushButton {
 public:
 	explicit ToggleSwitch(QWidget *parent = nullptr);
 	QSize sizeHint() const override { return {34, 20}; }
+	QSize minimumSizeHint() const override { return {34, 20}; }
 
 protected:
 	void paintEvent(QPaintEvent *) override;
+	void changeEvent(QEvent *event) override;
 };
 
 // Inline banner with icon, text and up to two actions. The action row stacks

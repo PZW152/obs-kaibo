@@ -437,7 +437,12 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
 {
 	QPainter p(this);
 	p.setRenderHint(QPainter::Antialiasing);
-	const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+	// Paint at the design size and centre it, whatever size the layout handed us.
+	// The QSS min-height of the push-button base rule is re-applied during polish
+	// and can leave the widget taller than 20px, which would stretch the track.
+	const qreal trackW = 34.0, trackH = 20.0;
+	const QRectF r(qRound((width() - trackW) / 2.0) + 0.5, qRound((height() - trackH) / 2.0) + 0.5, trackW - 1.0,
+		       trackH - 1.0);
 	if (isChecked()) {
 		p.setPen(Qt::NoPen);
 		p.setBrush(theme().color("brand"));
@@ -449,12 +454,21 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
 	p.setPen(Qt::NoPen);
 	p.setBrush(isChecked() ? theme().color("on-brand") : theme().color("ink-muted"));
 	const qreal x = isChecked() ? r.right() - 16 : r.left() + 2;
-	p.drawEllipse(QRectF(x, r.top() + 2.5, 14, 14));
+	p.drawEllipse(QRectF(x, r.center().y() - 7.0, 14, 14));
 	if (hasFocus()) {
 		p.setBrush(Qt::NoBrush);
 		p.setPen(QPen(theme().color("focus"), 2));
 		p.drawRoundedRect(r.adjusted(-0.5, -0.5, 0.5, 0.5), r.height() / 2, r.height() / 2);
 	}
+}
+
+void ToggleSwitch::changeEvent(QEvent *event)
+{
+	// The stylesheet re-applies the base button min-height on a style change,
+	// which would blow the switch back up; pin the size again afterwards.
+	if (event->type() == QEvent::StyleChange)
+		setFixedSize(34, 20);
+	QPushButton::changeEvent(event);
 }
 
 // ------------------------------------------------------------------ Banner
